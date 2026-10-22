@@ -9,7 +9,8 @@
 ;
 ;  REU tier (docs/PLATFORMS.md 4): if an REU answers at $df02-$df05, the
 ;  whole map is drawn once into REU memory at load and every step just
-;  DMA-fetches the viewport window into the hidden buffer instead.
+;  DMA-fetches the viewport window into the hidden buffer instead, one
+;  window per frame with $d016/$d011 fine scroll: smooth 50 fps walking.
 ;
 ;  Data files (made by the browser editor, loaded from sd2iec):
 ;    TILES   -> $8000   tile graphics

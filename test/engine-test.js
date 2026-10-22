@@ -1,8 +1,9 @@
 // Headless check: runs engine/c64/engine.prg on a 6502 core with the editor's exported
 // TILES/SPRITES/MAP01 data, then compares bitmap, screen RAM, colour RAM and sprite
 // registers against the editor's own renderer after a series of joystick moves.
-// The whole run is done twice: on a stock C64 and with an REU (the engine's REU tier).
-// Usage: node test/engine-test.js          (ISO64_REU=0 or 1: only that tier)
+// The whole run is done on a stock C64 and with an REU (the engine's REU tier) at both scroll
+// speeds; in the REU runs every frame of every scroll animation is checked too (frameCheck).
+// Usage: node test/engine-test.js          (ISO64_REU=0 or 1: only that tier; ISO64_SSH=0 or 1: one speed)
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const makeCPU = require('./cpu6502');
 const root = path.join(__dirname, '..');
@@ -131,7 +132,7 @@ function run(reu, ssh) {
 
   // --- compare against the editor model ------------------------------------------
   const ENTS = 0x5900;
-  function check(label) {
+  function check(label, note = '') {
     const px = mem[2], py = mem[3];
     // the engine mutates entities (bump/kill), so mirror its table
     m.ents.forEach((e, k) => { e.type = mem[ENTS + k * 8]; e.hp = mem[ENTS + k * 8 + 5]; });
@@ -158,7 +159,7 @@ function run(reu, ssh) {
     exp.forEach(([x, y], i) => { if (mem[0xd000 + i * 2] !== x || mem[0xd001 + i * 2] !== y) diff.push(`sprite ${i} at ${mem[0xd000 + i * 2]},${mem[0xd001 + i * 2]} want ${x},${y}`); });
     const ok = diff.length === 0;
     if (!ok) fails++;
-    console.log(`${ok ? 'PASS' : 'FAIL'} ${label.padEnd(26)} player ${px},${py}  sprites ${exp.length}  bank ${bankB ? 3 : 1}  cycles ${last}${ok ? '' : '\n   ' + diff.slice(0, 8).join('\n   ') + (diff.length > 8 ? `\n   …${diff.length} diffs` : '')}`);
+    console.log(`${ok ? 'PASS' : 'FAIL'} ${label.padEnd(26)} player ${px},${py}  sprites ${exp.length}  bank ${bankB ? 3 : 1}  cycles ${last}${note}${ok ? '' : '\n   ' + diff.slice(0, 8).join('\n   ') + (diff.length > 8 ? `\n   …${diff.length} diffs` : '')}`);
   }
 
   // --- REU tier: every frame of the scroll animation -------------------------------
@@ -172,13 +173,12 @@ function run(reu, ssh) {
   const sgn = v => v > 0 ? 1 : v < 0 ? -1 : 0, s8 = v => v << 24 >> 24;
   let walk = null, frameStats = { n: 0, maxWork: 0, sumWork: 0, maxColour: 0, wraps: 0 };
   if (reu) {
-    for (let i = 0; i < world.bmp.length; i++) if (R[i] !== world.bmp[i]) { fails++; console.log(`FAIL REU world bitmap differs from the editor at byte ${i}`); break; }
-    for (let i = 0; i < WW * WH; i++) if (R[0x18000 + i] !== world.scr[i] || (R[0x1c000 + i] & 15) !== (world.col[i] & 15)) { fails++; console.log(`FAIL REU world screen/colour differs from the editor at cell ${i % WW},${i / WW | 0}`); break; }
-    hooks[labels.sflip] = () => { if (walk) walk.enter = cpu.cyc; };
-    hooks[labels.sflip_done] = () => frameCheck();
+    hooks[labels.sflip] = () => { if (walk && !walk.waiting) { walk.enter = cpu.cyc; walk.waiting = true; } };   // (the wait loop is at sflip)
+    hooks[labels.sflip_done] = () => { if (walk) frameCheck(); };
   }
   function frameCheck() {
     const w = walk, k = ++w.k, S = 1 << ssh, px = mem[2], py = mem[3], diff = [];
+    if (k === 1) initWalk(w);
     const rx = w.rx0 - k * sgn(w.rx0) * 2 * S, ry = w.ry0 - k * sgn(w.ry0) * S;
     if (s8(mem[ZP.rx]) !== rx || s8(mem[ZP.ry]) !== ry) diff.push(`camera offset ${s8(mem[ZP.rx])},${s8(mem[ZP.ry])} want ${rx},${ry}`);
     const xs = rx & 7, ys = ry + 3 & 7;
@@ -191,7 +191,7 @@ function run(reu, ssh) {
     // picture: what the VIC shows vs the world image seen from camera pixel CX,CY
     const CX = wc * 8 - rx, CY = wr * 8 - ry, bg = mem[0x4c07], d = ys - 3;
     const bankB = (mem[0xdd00] & 3) === 0, BM = bankB ? 0xe000 : 0x6000, SCR = bankB ? 0xc000 : 0x4000;
-    if (mem[(bankB ? 0xc000 : 0x4000) + 0x3fff - 0x4000 + 0x4000] !== undefined && mem[bankB ? 0xffff : 0x7fff]) diff.push('idle byte $3fff of the bank is not 0');
+    if (mem[bankB ? 0xffff : 0x7fff]) diff.push('idle byte $3fff of the bank is not 0');   // shown where the fine scroll uncovers lines
     const colour = (bmp, scr, col, b, bit) => { const p = bmp[b] >> 6 - bit & 3; return p === 0 ? bg : p === 1 ? scr >> 4 : p === 2 ? scr & 15 : col & 15; };
     let bad = 0, first = '';
     for (let Y = 0; Y < 200; Y++) for (let X = 0; X < 320; X += 2) {
@@ -223,27 +223,34 @@ function run(reu, ssh) {
       const work = w.enter - w.done;
       frameStats.n++; frameStats.sumWork += work; frameStats.maxWork = Math.max(frameStats.maxWork, work);
     }
-    frameStats.maxColour = Math.max(frameStats.maxColour, cpu.cyc - w.enter);
-    w.vf = vf; w.done = cpu.cyc;
+    frameStats.maxColour = Math.max(frameStats.maxColour, cpu.cyc - (vf * FRAME + 250 * 63));   // from raster line 250
+    w.vf = vf; w.done = cpu.cyc; w.waiting = false;
     if (diff.length) { fails++; w.bad = true; console.log(`FAIL   frame ${k}/${w.n} of ${w.label}: camera ${CX},${CY}\n     ${diff.slice(0, 6).join('\n     ')}`); }
   }
   function startWalk(label) {   // before a press: the animation that a step will play
     if (!reu) return;
     walk = { label, ox: mem[2], oy: mem[3], k: 0 };
   }
+  function initWalk(w) {        // from the step taken: start offset (8 x cells) and frame count
+    const dx = mem[2] - w.ox, dy = mem[3] - w.oy;
+    w.rx0 = 16 * (dx - dy); w.ry0 = 8 * (dx + dy);
+    w.n = w.rx0 ? Math.abs(w.rx0) / (2 << ssh) : Math.abs(w.ry0) / (1 << ssh);
+  }
   function endWalk() {          // after it: the right number of frames, or none for no step
     if (!reu) return '';
-    const w = walk, dx = mem[2] - w.ox, dy = mem[3] - w.oy;
-    w.rx0 = 16 * (dx - dy); w.ry0 = 8 * (dx + dy);
-    const n = w.rx0 ? Math.abs(w.rx0) / (2 << ssh) : Math.abs(w.ry0) / (1 << ssh);
-    walk = null;
-    if (w.k !== n) { fails++; console.log(`FAIL   ${w.label}: ${w.k} scroll frames, want ${n}`); }
-    return n ? `  ${n} frames ok` : '';
+    const w = walk; initWalk(w); walk = null;
+    if (w.k !== w.n) { fails++; console.log(`FAIL   ${w.label}: ${w.k} scroll frames, want ${w.n}`); }
+    return w.n ? `  ${w.n} scroll frames${w.bad ? '' : ' ok'}` : '';
   }
 
   // joystick: bits 0 up 1 down 2 left 3 right (active low)
   const J = { up: 0xfe, down: 0xfd, left: 0xfb, right: 0xf7, upright: 0xf6, upleft: 0xfa, downleft: 0xf9, downright: 0xf5 };
   t0 = cpu.cyc; runUntil(labels.get_move); last = cpu.cyc - t0; check('start'); const boot = last;
+  if (reu) {   // the world image built at load must be the editor's, all of it
+    mem[ZP.ssh] = ssh;   // scroll speed (the engine's default is SCROLL_SH)
+  for (let i = 0; i < world.bmp.length; i++) if (R[i] !== world.bmp[i]) { fails++; console.log(`FAIL REU world bitmap differs from the editor at byte ${i}`); break; }
+  for (let i = 0; i < WW * WH; i++) if (R[0x18000 + i] !== world.scr[i] || (R[0x1c000 + i] & 15) !== (world.col[i] & 15)) { fails++; console.log(`FAIL REU world screen/colour differs from the editor at cell ${i % WW},${i / WW | 0}`); break; }
+  }
   const steps = [];
   if (PROF) {   // node test/profile.js <move>: profile a single step and stop
     spin(40); mem[0xdc00] = J[process.env.ISO64_PROFILE]; PROF.on = true;
@@ -278,10 +285,12 @@ function run(reu, ssh) {
     spin(40);  // released stick: now spinning in the wait-for-press loop
     mem[0xdc00] = J[mv];
     const bx = mem[2], by = mem[3];
+    startWalk(mv);
     t0 = cpu.cyc; runUntil(labels.main_loop); last = cpu.cyc - t0;
     mem[0xdc00] = 0xff;
     if (mem[2] !== bx || mem[3] !== by) steps.push(last);
-    runUntil(labels.get_move); check(mv);
+    const wn = endWalk();
+    runUntil(labels.get_move); check(mv, wn);
   }
   // keyboard: W/S/A/D + cursor keys = screen directions, Q/E/Z/C = map axes
   const K = { w: 0x57, s: 0x53, a: 0x41, d: 0x44, q: 0x51, e: 0x45, z: 0x5a, c: 0x43, up: 0x91, down: 0x11, left: 0x9d, right: 0x1d };
@@ -291,20 +300,26 @@ function run(reu, ssh) {
     const bx = mem[2], by = mem[3];
     spin(40);
     keyq.push(K[k]);
+    startWalk('key ' + k);
     t0 = cpu.cyc; runUntil(labels.main_loop); last = cpu.cyc - t0;
+    const wn = endWalk();
     runUntil(labels.get_move);
     const moved = mem[2] === bx + dx && mem[3] === by + dy, stayed = mem[2] === bx && mem[3] === by;
     if (moved) steps.push(last);
     if (!moved && !stayed) { fails++; console.log(`FAIL key ${k}: ${bx},${by} -> ${mem[2]},${mem[3]}`); }
-    check('key ' + k + (stayed ? ' (blocked)' : ''));
+    check('key ' + k + (stayed ? ' (blocked)' : ''), wn);
   }
   const avg = steps.reduce((a, b) => a + b, 0) / steps.length;
-  summary.push({ tier: reu ? 'REU' : 'stock', boot, avg, min: Math.min(...steps), max: Math.max(...steps), n: steps.length, dma: reuStats });
+  summary.push({ tier: reu ? 'REU/' + (1 << ssh) : 'stock', boot, avg, min: Math.min(...steps), max: Math.max(...steps), n: steps.length, dma: reuStats, fs: reu && frameStats });
 }
+// stock, then the REU tier at both scroll speeds (ISO64_REU=0|1 one tier, ISO64_SSH=0|1 one speed)
+const speeds = process.env.ISO64_SSH ? [+process.env.ISO64_SSH] : [1, 0];
 const tiers = process.env.ISO64_REU === '1' ? [true] : process.env.ISO64_REU === '0' ? [false] : [false, true];
-for (const t of tiers) run(t);
+for (const t of tiers) for (const sh of t ? speeds : [0]) run(t, sh);
 console.log('\nstep cycles (press to main_loop, incl. waiting for the flip raster line):');
 for (const s of summary) console.log(`  ${s.tier.padEnd(6)} boot ${String(s.boot).padStart(9)}  steps ${s.n}: avg ${s.avg.toFixed(0)}  min ${s.min}  max ${s.max}` +
-  (s.dma.dma ? `  (REU: ${s.dma.dma} DMAs, ${s.dma.bytes} bytes in all)` : ''));
+  (s.dma.dma ? `  (REU: ${s.dma.dma} DMAs, ${s.dma.bytes} bytes in all)` : '') +
+  (s.fs ? `
+         ${s.fs.n} scroll frames: work per frame avg ${(s.fs.sumWork / s.fs.n).toFixed(0)}, max ${s.fs.maxWork} of ${FRAME}; flip + colour fetch max ${s.fs.maxColour}; window moved ${s.fs.wraps} times` : ''));
 console.log(fails ? `\n${fails} FAILED` : '\nall frames match the editor preview');
 process.exit(fails ? 1 : 0);

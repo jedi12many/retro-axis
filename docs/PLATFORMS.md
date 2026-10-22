@@ -14,7 +14,7 @@ Period games targeted the minimum configuration to reach the most buyers. ISO64 
 
 | Feature | Stock C64 | C64 + REU | C64 Ultimate (REU + turbo + 2 SIDs) | VIC-20 |
 |---|---|---|---|---|
-| Walking | Cell steps, about 175 ms | **Smooth 50 fps scrolling** | Smooth scrolling | Cell steps |
+| Walking | Cell steps, about 175 ms | **Smooth 50 fps scrolling**: done (§4), 160 ms per straight step | Smooth scrolling: done (same REU code) | Cell steps |
 | Figures behind walls and trees | Sprite priority per cell (approximate) | Same | **Exact software masking** | Exact (soft sprites are already composited) |
 | Animated tiles (water, torches) | A few cells per step | Re-render cells into the REU world | Every frame | A few cells per step |
 | Combat AI | Turn-based pathfinding, small radius | Same | Larger radius, line of sight, fog of war | Like stock |
@@ -159,7 +159,36 @@ This tier is implemented in `engine/c64/main.s` (the "REU tier" block). Without 
 
   - **The REU step** is about 8k cycles of real work. Profile of one step (`ISO64_REU=1 node test/profile.js right`): `reu_bmp` 4,838 cycles and `reu_chr` 2 × 1,603 cycles, i.e. 4,320 DMA bytes plus register setup. The rest is input, sprites and mostly waiting for the flip raster line, which is up to one frame.
   - **Speed-up:** about 9× per step overall, and about 20× for the drawing itself.
-- **Smooth scrolling (not done yet).** A whole viewport refresh costs about 8k cycles, well inside one PAL frame (19.7k). So pixel scrolling at 50 fps with `$d016`/`$d011` fine scroll plus a DMA refresh every 4 pixels (8 rows vertically) is feasible at stock 1 MHz. It needs per-frame sprite repositioning and masking of the viewport edges that the fine scroll exposes. It was left for a later round.
+- **Smooth scrolling. Implemented** (`reu_walk` in `engine/c64/main.s`; REU tier only, so the stock path is unchanged). Each step is animated at 50 fps instead of jumping.
+  - **Motion.** One fine step is 2 hires pixels across (one multicolour pixel) and 1 line down. A straight step moves 4 cells across or 2 down (32 pixels or 16 lines), and a diagonal one moves (2, 1) cells. The speed is `ssh`, which sets 1 << ssh fine steps per frame. The default is `SCROLL_SH = 1`: a straight step takes 8 frames (160 ms) and a diagonal one 4 (80 ms). `ssh = 0` is the finest setting: 16 and 8 frames.
+  - **Camera maths.** `rx`/`ry` hold how far the camera still has to go, in pixels/lines, counting down to 0. Then `xs = rx & 7` and `ys = (ry+3) & 7` are the `$d016`/`$d011` fine scroll, with `ys = 3` at rest, as in the stock picture. The window shown from screen column 8 / row 1 is world column `W' = wcol − (rx >> 3)` and row `R' = wrow − ((ry+3) >> 3)`. The picture is shifted right by `xs` and down by `ys − 3` (−3…+4).
+  - **Each frame** fetches a 25 × 19 window into the back buffer: screen columns 7–31 from world column W'−1, and rows 0–18 or 1–19 depending on the shift. It then masks the edges (below), puts the sprites in a shadow table, and flips. So the window moves on by itself whenever the fine scroll wraps a cell. The double buffer stays: nothing is ever drawn into the frame on show.
+  - **Edge mask (the choice).** The 38-column / 24-row border modes only hide the outer screen edge. The viewport sits inside the screen (cells 8–31 × 1–18), so they don't fit. Sprites are all taken (hero + 7 entities). So the back buffer keeps exactly the pixels that land inside the viewport rectangle. Column 7 keeps its right `xs` pixels (`AND $00/$03/$0f/$3f`), and column 31 its left `8−xs` (`AND $ff/$fc/$f0/$c0`). The top partial row keeps lines `zz…7` and the bottom one lines `0…zz−1`, with the other lines zeroed (`zz = 3−ys` or `11−ys`). A row that doesn't show at all is cleared by one DMA that repeats REU byte `$00000` (world column 0 is never drawn, so that byte is 0). Pixel pair 00 is the background colour, so the margins stay plain background. Column masks are unrolled per buffer (`cm_a`/`cm_b`, `lda abs,y / and zp / sta abs,y`), and line zeroing has one unrolled routine per buffer and row (`zl_*`).
+  - **Flip at raster line 250** (`SFLIP_LINE`), not 210. `$d011` must not change during lines `$30–$f7`, where writing a YSCROLL that matches the current line starts a badline mid-line (VSP, which crashes some C64s). Line 250 is in the lower border, and every visible pixel lies in lines 59–202. The flip switches the bank, writes `$d016`/`$d011`, copies the sprite shadow (positions, pointers in both screens, colours, enable), and then fetches colour RAM. The colour fetch only happens when the window moved, and it ends by line ~285, long before the viewport starts.
+  - **Sprites.** The hero stays centred. Its y eases from the old tile's height to the new one's (`hy8`, in eighths of a line). At the start of the step, `cands` lists the entities that can show at all (columns 4–32, rows −1…20 at the new camera). Each frame they move with the world (`x + rx`, `y + ry`) and show if inside the stock bounds converted to pixels (x 92–252, y 49–185). This is exactly the stock rule at rest, and x never needs the MSB.
+  - **Cost per frame** (`node test/engine-test.js`, both speeds, 578 frames). Work between flips: average 12.6k cycles, at most 13.4k. Flip plus colour fetch: at most 2.2k. That makes about 15.6k of the 19,656-cycle PAL frame. The harness doesn't model VIC cycle stealing: about 1.1k for the 25 bitmap badlines and up to ~0.6k for 8 sprites. Even with that, about 2k cycles are spare. Profile of a straight step (`ISO64_REU=1 ISO64_SSH=1 node test/profile.js upright`, per frame):
+
+    | Part | Cycles |
+    |---|---|
+    | `reu_bmp`: 19 bitmap runs of 200 bytes | 5,010 |
+    | `reu_chr`: 19 screen runs of 25 bytes, plus colour RAM on window moves | 1,500 + 2,000 |
+    | `cm_a`/`cm_b`: column masks | 1,940 |
+    | `zrow`, `zlines`: hidden rows and lines | 270–540, + ~1,200 while a row is partly shown |
+    | `ssprites`, `sframe`, `colmask`, rest | ~800 |
+    | `sflip`: waiting for line 250 | the rest |
+
+    From key press back to `main_loop`, a step takes about 78.5k cycles for 4 frames and 157k for 8: one video frame per animation frame, none dropped.
+  - **Verified.** The harness checks every animation frame against the editor (see Testing). In VICE 3.10 (`x64sc -reu -reusize 512`, or `engine/c64/run-vice.cmd reu`), a driver over the remote monitor broke at `sflip_done` on every frame of the steps D, Q, D. Every flip came exactly one video frame after the previous one: 17,968 / 21,349 cycles alternating (with and without the colour fetch), 19,658 on average. In each of the 20 screenshots the picture covers exactly the 192 × 144 viewport with clean edges. Frames are in `test/out/vice-reu-scroll.gif` and `test/out/vice-reu-scroll-frames.png`.
+  - **Testing the animation** (`test/engine-test.js`, REU runs at `ssh` = 1 and 0). After boot, the whole REU world image must equal the editor's: the test renders the same 35 windows with the editor's `renderMap`. At every `sflip_done` it then checks:
+    - the camera offset is one fine step further than the previous frame;
+    - `$d016`/`$d011` are the fine scroll that offset implies;
+    - the fetched window (world column/row) is the one the offset implies, so it changes exactly when the scroll wraps a cell;
+    - the VIC picture matches. All 320 × 200 pixels are rendered from bitmap, screen and colour RAM with the fine scroll applied, and compared with the editor's world image seen from that camera pixel. Everything outside the viewport must be background;
+    - the sprites match the interpolation above;
+    - the frame came in the next video frame.
+
+    Each step must have the expected number of frames, and its final frame is checked against the editor preview as before. Deliberately breaking the column mask or the line zeroing makes these checks fail.
+  - **Not covered yet:** colour RAM and screen RAM of column 7 and rows 0/19 now get written (always hidden by a zero bitmap). A future HUD in the margins would need to start outside those cells, or have them restored.
 - **Map changes** such as an opened door or a destroyed wall re-render just the affected tiles into the REU image. This is not needed yet, since nothing in the game changes tiles. When it is, it can reuse `world_build`'s window render for the windows that contain the changed cell.
 - **Testing.**
   - **Harness.** `test/engine-test.js` runs the whole move script twice: on a stock C64, where `$de00-$dfff` reads as open bus, and with a 512 KB REU model. The model has registers `$df00-$df0a`, stash/fetch/swap/verify, autoload, address-fixing in `$df0a`, and 1 cycle per byte with the CPU halted. Every frame of both runs must match the editor preview. `ISO64_REU=0|1` runs one tier only, also for `ISO64_KEYS` and `test/profile.js`.
