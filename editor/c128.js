@@ -3,8 +3,8 @@
 //  Converts the C64 tileset to VDC hi-res cells and renders a map the way
 //  engine/c128 does:
 //    - VDC bitmap mode, 640x200, attributes on: every 8x8 cell has a
-//      foreground and a background colour (attribute byte fg<<4 | bg) out of
-//      the 16 RGBI colours
+//      foreground and a background colour (attribute byte bg<<4 | fg, as in
+//      text mode the low nibble is the foreground) out of the 16 RGBI colours
 //    - a C64 multicolour cell (4 double-wide pixels, 4 colours) becomes an
 //      8-pixel hi-res cell: the best fg/bg pair per cell, with 2x2 ordered
 //      dithering standing in for the other colours
@@ -21,8 +21,10 @@ const CTILES_ADDR=0x9800,CTILES_MAX=0x2800,CSPR_ADDR=0x9100;
 const C128_BAYER=[0,2,3,1];   // 2x2 ordered dither: pixel lit when level (0-4) > BAYER[(y&1)*2+(x&1)]
 
 const vdcRgb=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
-const vdcDist=(p,q)=>{const r=(p[0]+q[0])/2;   // "redmean" perceptual distance
-  return (2+r/256)*(p[0]-q[0])**2+4*(p[1]-q[1])**2+(2+(255-r)/256)*(p[2]-q[2])**2;};
+// luma + chroma distance: hue counts as much as brightness, so the C64's soft
+// greens and browns map to green and brown dithers rather than to greys
+const vdcYuv=c=>{const y=.299*c[0]+.587*c[1]+.114*c[2];return[y,c[2]-y,c[0]-y];};
+const vdcDist=(p,q)=>{const a=vdcYuv(p),b=vdcYuv(q);return(a[0]-b[0])**2+(a[1]-b[1])**2+(a[2]-b[2])**2;};
 const vdcLum=i=>{const c=vdcRgb(VDC_PAL[i]);return .299*c[0]+.587*c[1]+.114*c[2];};
 // pairs (bg darker than fg) and, per pair and C64 colour, the best dither level 0-4
 let C128_FIT=null;
@@ -44,8 +46,10 @@ function c128Nearest(c64col){const q=vdcRgb(PAL[c64col]);let b=0;
 // per map: background of empty cells, border, side panel text / background
 function c128Defaults(m){return{bg:c128Nearest(m.bg),border:c128Nearest(m.border),pfg:15,pbg:2};}
 function c128Settings(m){if(!m.c128)m.c128=c128Defaults(m);return m.c128;}
-// map header bytes $0e-$0f (docs/PLATFORMS.md 3)
-function c128Header(m){const g=m.c128||c128Defaults(m);return[(g.border<<4)|g.bg,(g.pfg<<4)|g.pbg];}
+// map header bytes $0e-$0f (docs/PLATFORMS.md 3): empty-cell background << 4 |
+// border (R26), and the panel's attribute byte (background << 4 | text)
+function c128Header(m){const g=m.c128||c128Defaults(m);return[(g.bg<<4)|g.border,(g.pbg<<4)|g.pfg];}
+const c128Attr=(fg,bg)=>(bg<<4)|fg;
 
 // C128 version of a tile: px = 32 hi-res pixels per line (-1 transparent,
 // 0 background, 1 foreground), cells = [{fg, bg, own}]. t.c128 holds a
@@ -77,7 +81,7 @@ function c128Resize(t,d){
   else if(d<0){v.px=v.px.slice(-d*256);v.cells=v.cells.slice(-d*4);}
 }
 // tile -> VDC cells: type (0 empty, 1 opaque, 2 masked + colours, 3 masked
-// keep colours), attribute fg<<4|bg, 8 bitmap bytes, 8 mask bytes (1 = keep)
+// keep colours), attribute bg<<4|fg, 8 bitmap bytes, 8 mask bytes (1 = keep)
 function c128EncodeTile(t,c64bg){
   const d=c128TileData(t,c64bg),cells=[];
   for(let r=0;r<t.h;r++)for(let c=0;c<4;c++){
@@ -89,7 +93,7 @@ function c128EncodeTile(t,c64bg){
     const cc=d.cells[r*4+c];let type;
     if(trans===64)type=0;else if(trans===0)type=1;
     else type=cc.own==='own'?2:cc.own==='keep'?3:((64-trans)>=32?2:3);
-    cells.push({type,attr:(cc.fg<<4)|cc.bg,fg:cc.fg,bg:cc.bg,bmp,mask});
+    cells.push({type,attr:c128Attr(cc.fg,cc.bg),fg:cc.fg,bg:cc.bg,bmp,mask});
   }
   return{h:t.h,cells};
 }
@@ -154,7 +158,7 @@ function c128DrawSprite(fb,sid,fg,X,Y){
         const o=row*C128.cols+col,b=128>>(x&7),on=ch==='x'||(ch==='s'&&!((x+y)&1));
         fb.bmp[o*8+(y&7)]=on?fb.bmp[o*8+(y&7)]|b:fb.bmp[o*8+(y&7)]&~b;
         fb.src[o*64+(y&7)*8+(x&7)]=ch==='x'?fg:-1;
-        if(ch!=='o')fb.attr[o]=(fg<<4)|(fb.attr[o]&15);}}});
+        if(ch!=='o')fb.attr[o]=(fb.attr[o]&0xf0)|fg;}}});
 }
 function c128Text(fb,col,row,s,font){
   for(let k=0;k<s.length;k++){const c=s.charCodeAt(k),g=c<32||c>95?0:c-32;
@@ -162,7 +166,7 @@ function c128Text(fb,col,row,s,font){
 }
 function c128Render(m,tiles,cx,cy){
   const g=m.c128||c128Defaults(m),enc=tiles.map(t=>t?c128EncodeTile(t,m.bg):null),fb=c128NewFB(),vp=C128.vp,font=c128Font();
-  for(let r=0;r<C128.rows;r++)for(let c=0;c<C128.cols;c++)fb.attr[r*C128.cols+c]=c<C128.panelCol?g.bg:(g.pfg<<4)|g.pbg;
+  for(let r=0;r<C128.rows;r++)for(let c=0;c<C128.cols;c++)fb.attr[r*C128.cols+c]=c<C128.panelCol?c128Attr(0,g.bg):c128Attr(g.pfg,g.pbg);
   for(let y=0;y<MW;y++)for(let x=0;x<MW;x++){
     const i=y*MW+x,h=m.hgt[i]&3,{col,row}=c128Project(x,y,cx,cy);
     if(!c128CanTouch(col,row))continue;
@@ -186,7 +190,7 @@ function c128Render(m,tiles,cx,cy){
   for(let r=vp.r0;r<=vp.r1;r++)for(let c=vp.c0;c<=vp.c1;c++){
     const o=r*C128.cols+c,a=fb.attr[o];let bad=false;
     for(let k=0;k<64&&!bad;k++){const s=fb.src[o*64+k];if(s<0)continue;
-      const shown=fb.bmp[o*8+(k>>3)]&128>>(k&7)?a>>4:a&15;if(shown!==s)bad=true;}
+      const shown=fb.bmp[o*8+(k>>3)]&128>>(k&7)?a&15:a>>4;if(shown!==s)bad=true;}
     if(bad){clash++;clashCells.push(o);}
   }
   return{fb,clash,clashCells,sprites:spr.length};
@@ -196,14 +200,14 @@ function c128ToImage(fb,img){
   for(let row=0;row<C128.rows;row++)for(let col=0;col<C128.cols;col++){
     const o=row*C128.cols+col,a=fb.attr[o];
     for(let y=0;y<8;y++){const b=fb.bmp[o*8+y];
-      for(let p=0;p<8;p++){const c=P[b&128>>p?a>>4:a&15],i=((row*8+y)*W+col*8+p)*4;
+      for(let p=0;p<8;p++){const c=P[b&128>>p?a&15:a>>4],i=((row*8+y)*W+col*8+p)*4;
         d[i]=c[0];d[i+1]=c[1];d[i+2]=c[2];d[i+3]=255;}}}
 }
 // ---- export -----------------------------------------------------------------
 // ctiles.prg -> $9800. Same layout as the C64 TILES file (count, pointer table,
 // records of h, flags, cell pointers) but VDC cells:
 //   type (1 opaque, 2 masked + attribute, 3 masked keep attribute), attribute
-//   byte (fg<<4 | bg), 8 bitmap bytes, 8 mask bytes unless opaque
+//   byte (bg<<4 | fg), 8 bitmap bytes, 8 mask bytes unless opaque
 function c128ExportTiles(tiles,c64bg){
   const n=tiles.length-1,out=[CTILES_ADDR&255,CTILES_ADDR>>8,n],ptrs=[0,0],recs=[];
   let addr=CTILES_ADDR+1+2*(n+1);
