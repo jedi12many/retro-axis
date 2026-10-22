@@ -49,7 +49,7 @@ canvas.px{image-rendering:pixelated;display:block}
   <button id="btnNew">New project</button>
   <button id="btnOpen">Open…</button>
   <button id="btnSave">Save project</button>
-  <button id="btnExport" title="C64: tiles.prg, sprites.prg; VIC-20: vtiles.prg, vsprites.prg; one mapxx.prg per map (shared)">Export PRGs</button>
+  <button id="btnExport" title="C64: tiles.prg, sprites.prg; VIC-20: vtiles.prg, vsprites.prg; C128: ctiles.prg, csprites.prg; one mapxx.prg per map (shared)">Export PRGs</button>
   <input id="fileIn" type="file" accept=".json" hidden>
 </header>
 
@@ -66,7 +66,7 @@ canvas.px{image-rendering:pixelated;display:block}
       <canvas id="grid" width="512" height="512"></canvas></div>
   </div>
   <div class="col">
-    <div class="row"><label>Machine</label><button id="mchC64" class="on">C64</button><button id="mchVic">VIC-20</button></div>
+    <div class="row"><label>Machine</label><button id="mchC64" class="on">C64</button><button id="mchVic">VIC-20</button><button id="mchC128">C128 80-col</button></div>
     <div class="box" id="c64Box"><h3>C64 preview — exact engine output (click to paint here too · arrow keys move camera)</h3>
       <canvas id="prev" class="px" width="320" height="200" style="width:640px;height:400px"></canvas>
       <div class="hint" id="prevInfo"></div></div>
@@ -81,6 +81,20 @@ canvas.px{image-rendering:pixelated;display:block}
           <div class="row"><label style="min-width:0"><input type="checkbox" id="vClash"> Highlight colour clash</label></div>
           <div class="hint" id="vStats"></div>
           <div class="hint" style="margin-top:8px">Tiles are converted from the C64 set automatically. Each cell gets one colour of its own; screen, border and auxiliary colours are shared by the whole screen. Hero and monsters are drawn into the characters (the VIC-20 has no sprites), so they take on the cell colour.</div>
+        </div>
+      </div></div>
+    <div class="box" id="c128Box" hidden><h3>C128 preview — VDC 80 columns: 640×200 bitmap, 2 of 16 RGBI colours per 8×8 cell, RGBI monitor shape (click to paint · arrow keys move camera)</h3>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+        <canvas id="cprev" class="px" width="640" height="200" style="width:720px;height:540px;border:10px solid #000;box-sizing:content-box"></canvas>
+        <div style="width:220px">
+          <div class="row"><label>Empty cells</label><span id="cBg"></span></div>
+          <div class="row"><label>Border</label><span id="cBorder"></span></div>
+          <div class="row"><label>Panel text</label><span id="cPfg"></span></div>
+          <div class="row"><label>Panel</label><span id="cPbg"></span></div>
+          <div class="row"><button id="cAuto">Default colours</button></div>
+          <div class="row"><label style="min-width:0"><input type="checkbox" id="cClash"> Highlight colour clash</label></div>
+          <div class="hint" id="cStats"></div>
+          <div class="hint" style="margin-top:8px">Tiles are converted from the C64 set automatically: each 8×8 cell gets the foreground/background pair that fits best, and ordered dithering stands in for its other colours. Hero and monsters are drawn into the cells (soft sprites); a cell with body pixels takes the figure's colour as its foreground. The panel on the right shows the map name and position.</div>
         </div>
       </div></div>
     <div class="box" style="display:flex;gap:18px;flex-wrap:wrap">
@@ -113,7 +127,7 @@ canvas.px{image-rendering:pixelated;display:block}
       <div class="row"><button id="tLeft">◀ Move</button><button id="tRight">Move ▶</button></div>
     </div>
     <div class="box"><h3>Machine</h3>
-      <div class="row"><button id="tmC64" class="on">C64</button><button id="tmVic">VIC-20</button></div>
+      <div class="row"><button id="tmC64" class="on">C64</button><button id="tmVic">VIC-20</button><button id="tmC128">C128</button></div>
       <div id="vicTileBox" hidden>
         <div class="hint" id="vicTileInfo"></div>
         <div class="row"><button id="vEdit">Edit by hand</button><button id="vReset">Reset to automatic</button></div>
@@ -138,11 +152,13 @@ canvas.px{image-rendering:pixelated;display:block}
     <div class="box"><h3>Cell colors — cell <span id="cellLbl"></span></h3>
       <div class="row" id="c64Slots"><label>Slot</label>
         <button id="slot1" class="on">01 scr hi</button><button id="slot2">10 scr lo</button><button id="slot3">11 col RAM</button></div>
+      <div class="row" id="c128Slots" hidden><label>Slot</label><button id="slotFg" class="on">1 foreground</button><button id="slotBg">0 background</button></div>
       <div class="swatches" id="cellSw"></div>
       <div class="row" style="margin-top:6px"><label>Owner</label>
         <select id="cOwn"><option value="auto">auto (≥50% opaque)</option><option value="own">writes colors</option><option value="keep">keeps colors below</option></select></div>
       <div class="row"><button id="cAll">Apply these colors to all cells</button></div>
       <div class="hint" id="vicColHint" hidden>VIC-20: each cell has one colour of its own (pen 10, colours 0–7). Screen, border and auxiliary colours are shared by the whole screen and set per map in the Map tab.</div>
+      <div class="hint" id="c128ColHint" hidden>C128: each 8×8 cell has a foreground (pen 1) and a background colour (pen 0), any of the 16 RGBI colours.</div>
       <div class="hint">A partly transparent cell either writes its colors (pixels underneath get recolored) or keeps the colors underneath (its own pixels get recolored). The map preview shows the result.</div>
     </div>
     <div class="box"><h3>Preview</h3><canvas id="tprev" class="px"></canvas></div>
@@ -150,6 +166,7 @@ canvas.px{image-rendering:pixelated;display:block}
 </main>
 
 <script src="vic20.js"></script>
+<script src="c128.js"></script>
 <script>
 // ===================================================================
 //  Constants shared with engine/main.s — keep in sync
@@ -306,20 +323,24 @@ function buildTools(){
 }
 function tileThumb(t,scale=2,bg=0){ // shows the version for the selected machine
   const c=document.createElement('canvas');c.width=32*scale;c.height=t.h*8*scale;
-  const g=c.getContext('2d'),v=tileView(t,false);
-  for(let y=0;y<t.h*8;y++)for(let x=0;x<16;x++){const p=v.px[y*16+x];
+  const g=c.getContext('2d'),v=tileView(t,false),w=v.w,pw=32*scale/w;
+  for(let y=0;y<t.h*8;y++)for(let x=0;x<w;x++){const p=v.px[y*w+x];
     if(p<0){g.fillStyle=((x+y)&1)?'#22222c':'#1a1a22';}
-    else g.fillStyle=v.cols(v.cells[(y>>3)*4+(x>>2)])[p];
-    g.fillRect(x*2*scale,y*scale,2*scale,scale);}
+    else g.fillStyle=v.cols(v.cells[cellAt(x,y,w)])[p];
+    g.fillRect(x*pw,y*scale,pw,scale);}
   return c;
 }
-// the pixel data being shown/edited: the C64 tile, or its VIC-20 version.
-// create = make a hand-edited VIC-20 copy if the tile has none yet.
+// the pixel data being shown/edited: the C64 tile, or its VIC-20 or C128 version.
+// create = make a hand-edited copy if the tile has none yet. w = pixels per line
+// (16 multicolour pixels, or 32 hi-res pixels for the C128).
 function tileView(t,create){
-  if(machine!=='vic')return{px:t.px,cells:t.cells,cols:cc=>[PAL[M().bg],PAL[cc.c1],PAL[cc.c2],PAL[cc.c3]]};
+  if(machine==='c128'){const d=create?c128Editable(t,M().bg):c128TileData(t,M().bg);
+    return{w:32,px:d.px,cells:d.cells,cols:cc=>[VDC_PAL[cc.bg],VDC_PAL[cc.fg]]};}
+  if(machine!=='vic')return{w:16,px:t.px,cells:t.cells,cols:cc=>[PAL[M().bg],PAL[cc.c1],PAL[cc.c2],PAL[cc.c3]]};
   const g=vicSettings(M()),d=create?vicEditable(t,g,M().bg):vicTileData(t,g,M().bg);
-  return{px:d.px,cells:d.cells,cols:cc=>[VIC_PAL[g.bg],VIC_PAL[g.border],VIC_PAL[cc.fg],VIC_PAL[g.aux]]};
+  return{w:16,px:d.px,cells:d.cells,cols:cc=>[VIC_PAL[g.bg],VIC_PAL[g.border],VIC_PAL[cc.fg],VIC_PAL[g.aux]]};
 }
+const cellAt=(x,y,w)=>(y>>3)*4+(x>>(w===32?3:2));
 function tileSwatch(t){ // dominant colour of the floor diamond, for the top-down grid
   if(!t)return'#000';const cnt={};
   for(let y=t.h*8-12;y<t.h*8-4;y++)for(let x=4;x<12;x++){const v=t.px[y*16+x];if(v<0)continue;const cc=t.cells[(y>>3)*4+(x>>2)];const k=[M().bg,cc.c1,cc.c2,cc.c3][v];cnt[k]=(cnt[k]||0)+1;}
@@ -450,20 +471,54 @@ function redrawVic(){
     (ok?'':' <b style="color:#f66">over budget</b>')+`<br><b>${res.clash}</b> of ${vpCells} cells show colour clash<br>${res.sprites} figures drawn as soft sprites`;
 }
 function showMachine(){
-  $('c64Box').hidden=machine!=='c64';$('vicBox').hidden=machine!=='vic';
-  $('mchC64').className=machine==='c64'?'on':'';$('mchVic').className=machine==='vic'?'on':'';
-  try{localStorage.setItem('iso64-machine',machine);}catch(e){}
+  showMachineSilently();
   if(machine==='vic')buildVicProps();
+  if(machine==='c128')buildC128Props();
   redrawPreviewAny();
 }
 function showMachineSilently(){
-  $('c64Box').hidden=machine!=='c64';$('vicBox').hidden=machine!=='vic';
-  $('mchC64').className=machine==='c64'?'on':'';$('mchVic').className=machine==='vic'?'on':'';
+  $('c64Box').hidden=machine!=='c64';$('vicBox').hidden=machine!=='vic';$('c128Box').hidden=machine!=='c128';
+  $('mchC64').className=machine==='c64'?'on':'';$('mchVic').className=machine==='vic'?'on':'';$('mchC128').className=machine==='c128'?'on':'';
   try{localStorage.setItem('iso64-machine',machine);}catch(e){}
 }
-function redrawPreviewAny(){if(machine==='vic')redrawVic();else redrawPreview();}
+function redrawPreviewAny(){if(machine==='vic')redrawVic();else if(machine==='c128')redrawC128();else redrawPreview();}
 $('mchC64').onclick=()=>{machine='c64';showMachine();};
 $('mchVic').onclick=()=>{machine='vic';showMachine();};
+$('mchC128').onclick=()=>{machine='c128';showMachine();};
+// ---- C128 preview (renderer in c128.js) ----
+const cprev=$('cprev'),cctx=cprev.getContext('2d');
+function c128Picker(el,get,set){
+  el.innerHTML='';const s=document.createElement('select');
+  VDC_PAL.forEach((c,i)=>{const o=document.createElement('option');o.value=i;o.textContent=i+' '+VDC_NAME[i];if(get()===i)o.selected=true;s.appendChild(o);});
+  const sw=document.createElement('span');sw.className='slot';sw.style.background=VDC_PAL[get()];
+  s.onchange=()=>{set(+s.value);sw.style.background=VDC_PAL[+s.value];dirty();redrawC128();};
+  el.appendChild(s);el.appendChild(sw);
+}
+function buildC128Props(){
+  const g=c128Settings(M());
+  c128Picker($('cBg'),()=>g.bg,v=>g.bg=v);c128Picker($('cBorder'),()=>g.border,v=>g.border=v);
+  c128Picker($('cPfg'),()=>g.pfg,v=>g.pfg=v);c128Picker($('cPbg'),()=>g.pbg,v=>g.pbg=v);
+}
+function redrawC128(){
+  const m=M(),g=c128Settings(m),res=c128Render(m,P.tiles,cam.x,cam.y);
+  const img=cctx.createImageData(640,200);c128ToImage(res.fb,img);cctx.putImageData(img,0,0);
+  cprev.style.borderColor=VDC_PAL[g.border];
+  if($('cClash').checked){cctx.strokeStyle='#ff2b6a';
+    for(const o of res.clashCells)cctx.strokeRect((o%C128.cols)*8+.5,Math.floor(o/C128.cols)*8+.5,7,7);}
+  const vp=C128.vp,cells=(vp.c1-vp.c0+1)*(vp.r1-vp.r0+1),bytes=c128ExportTiles(P.tiles,m.bg).length-2;
+  $('cStats').innerHTML=`<b>${res.clash}</b> of ${cells} viewport cells show colour clash<br>${res.sprites} figures drawn as soft sprites<br>`+
+    `C128 tiles: ${bytes} / ${CTILES_MAX} bytes at $9800`+(bytes>CTILES_MAX?' <b style="color:#f66">over budget</b>':'');
+}
+$('cAuto').onclick=()=>{M().c128=c128Defaults(M());dirty();buildC128Props();redrawC128();};
+$('cClash').onchange=redrawC128;
+function c128Pick(e){ // inverse projection on the C128 screen, ignores height
+  const fx=e.offsetX/720*640,fy=e.offsetY/540*200;   // hi-res pixels, lines
+  const a=(fx-(C128.centerCol*8+16))/16,b=(fy-(C128.centerRow*8+8))/8;
+  const x=cam.x+Math.round((a+b)/2),y=cam.y+Math.round((b-a)/2);
+  return(x>=0&&y>=0&&x<32&&y<32)?{x,y}:null;
+}
+cprev.onmousedown=e=>{const p=c128Pick(e);if(p){painting=true;applyTool(p.x,p.y,true);}};
+cprev.onmousemove=e=>{if(!painting)return;const p=c128Pick(e);if(p)applyTool(p.x,p.y,false);};
 $('vAuto').onclick=()=>{M().vic=vicAutoColours(P.tiles,M());dirty();buildVicProps();redrawVic();};
 $('vClash').onchange=redrawVic;
 function vicPick(e){ // inverse projection on the VIC-20 screen, ignores height
@@ -515,29 +570,31 @@ function buildTileList(){
 }
 function buildPens(){
   const v=tileView(T(),false),cc=v.cells[cellSel],cs=v.cols(cc),vic=machine==='vic';
-  const pens=[[-1,'clear'],[0,vic?'00 screen':'00'],[1,vic?'01 border':'01'],[2,vic?'10 cell':'10'],[3,vic?'11 aux':'11']];
+  const pens=machine==='c128'?[[-1,'clear'],[0,'0 background'],[1,'1 foreground']]:
+    [[-1,'clear'],[0,vic?'00 screen':'00'],[1,vic?'01 border':'01'],[2,vic?'10 cell':'10'],[3,vic?'11 aux':'11']];
   $('pens').innerHTML='';
   pens.forEach(([p,l])=>{const b=document.createElement('button');b.innerHTML=l+(p>=0?`<span class="slot" style="background:${cs[p]}"></span>`:'');b.className=pen===p?'on':'';b.onclick=()=>{pen=p;buildPens();};$('pens').appendChild(b);});
 }
 function buildCellSw(){
-  const vic=machine==='vic',v=tileView(T(),false),cc=v.cells[cellSel];
+  const vic=machine==='vic',c128=machine==='c128',v=tileView(T(),false),cc=v.cells[cellSel];
   $('cellLbl').textContent=`row ${cellSel>>2}, col ${cellSel&3}`;
-  $('c64Slots').hidden=vic;$('vicColHint').hidden=!vic;
-  const pal=vic?VIC_PAL.slice(0,8):PAL,names=vic?VIC_NAME:CNAME,cur=vic?cc.fg:cc['c'+slot];
+  $('c64Slots').hidden=vic||c128;$('vicColHint').hidden=!vic;$('c128Slots').hidden=!c128;$('c128ColHint').hidden=!c128;
+  const pal=c128?VDC_PAL:vic?VIC_PAL.slice(0,8):PAL,names=c128?VDC_NAME:vic?VIC_NAME:CNAME,cur=c128?cc[slot128]:vic?cc.fg:cc['c'+slot];
   $('cellSw').innerHTML=pal.map((c,i)=>`<div class="sw ${i===cur?'on':''}" title="${i} ${names[i]}" style="background:${c}" data-i="${i}"></div>`).join('');
   $('cellSw').querySelectorAll('.sw').forEach(d=>d.onclick=()=>{const w=tileView(T(),true).cells[cellSel];
-    if(vic)w.fg=+d.dataset.i;else w['c'+slot]=+d.dataset.i;dirty();buildTileTab();});
+    if(c128)w[slot128]=+d.dataset.i;else if(vic)w.fg=+d.dataset.i;else w['c'+slot]=+d.dataset.i;dirty();buildTileTab();});
   [1,2,3].forEach(k=>$('slot'+k).className=slot===k?'on':'');
+  $('slotFg').className=slot128==='fg'?'on':'';$('slotBg').className=slot128==='bg'?'on':'';
   $('cOwn').value=cc.own||'auto';
 }
 function redrawTile(){
-  const t=T(),v=tileView(t,false);tcan.width=16*TZX;tcan.height=t.h*8*TZY;
-  for(let y=0;y<t.h*8;y++)for(let x=0;x<16;x++){const p=v.px[y*16+x];
+  const t=T(),v=tileView(t,false),w=v.w,zx=16*TZX/w;tcan.width=16*TZX;tcan.height=t.h*8*TZY;
+  for(let y=0;y<t.h*8;y++)for(let x=0;x<w;x++){const p=v.px[y*w+x];
     if(p<0)tctx.fillStyle=((x+y)&1)?'#2a2a36':'#22222c';
-    else tctx.fillStyle=v.cols(v.cells[(y>>3)*4+(x>>2)])[p];
-    tctx.fillRect(x*TZX,y*TZY,TZX,TZY);}
+    else tctx.fillStyle=v.cols(v.cells[cellAt(x,y,w)])[p];
+    tctx.fillRect(x*zx,y*TZY,zx,TZY);}
   tctx.strokeStyle='#ffffff30';
-  for(let x=0;x<=16;x++){tctx.beginPath();tctx.moveTo(x*TZX+.5,0);tctx.lineTo(x*TZX+.5,tcan.height);tctx.stroke();}
+  for(let x=0;x<=w;x++){tctx.beginPath();tctx.moveTo(x*zx+.5,0);tctx.lineTo(x*zx+.5,tcan.height);tctx.stroke();}
   tctx.strokeStyle='#ffffffa0';
   for(let x=0;x<=4;x++){tctx.beginPath();tctx.moveTo(x*4*TZX+.5,0);tctx.lineTo(x*4*TZX+.5,tcan.height);tctx.stroke();}
   for(let y=0;y<=t.h;y++){tctx.beginPath();tctx.moveTo(0,y*8*TZY+.5);tctx.lineTo(tcan.width,y*8*TZY+.5);tctx.stroke();}
@@ -549,52 +606,57 @@ function redrawTile(){
 }
 function buildTileTab(){
   const t=T();if(!t){tileIdx=1;return buildTileTab();}
-  const vic=machine==='vic';
+  const vic=machine==='vic',c128=machine==='c128',own=vic?t.vic:t.c128,nm=vic?'VIC-20':'C128';
   $('tName').value=t.name;$('tH').value=t.h;$('tBlock').checked=!!(t.flags&1);
-  $('tmC64').className=vic?'':'on';$('tmVic').className=vic?'on':'';$('vicTileBox').hidden=!vic;
-  if(vic){
-    $('vicTileInfo').innerHTML=t.vic?'<b>Hand-edited.</b> Changes to the C64 tile no longer carry over to the VIC-20 version.':
-      '<b>Automatic</b> conversion from the C64 tile, using this map’s shared colours. Drawing on it makes a hand-edited copy.';
-    $('vEdit').hidden=!!t.vic;$('vReset').hidden=!t.vic;
+  $('tmC64').className=vic||c128?'':'on';$('tmVic').className=vic?'on':'';$('tmC128').className=c128?'on':'';$('vicTileBox').hidden=!vic&&!c128;
+  if(vic||c128){
+    $('vicTileInfo').innerHTML=own?`<b>Hand-edited.</b> Changes to the C64 tile no longer carry over to the ${nm} version.`:
+      vic?'<b>Automatic</b> conversion from the C64 tile, using this map’s shared colours. Drawing on it makes a hand-edited copy.':
+      '<b>Automatic</b> conversion from the C64 tile: the best colour pair per cell plus dithering. Drawing on it makes a hand-edited copy.';
+    $('vEdit').hidden=!!own;$('vReset').hidden=!own;
   }
-  $('tHint').textContent=vic?
+  $('tHint').textContent=c128?
+    'C128 version: 32 hi-res pixels per line. Left-click draws, right-click picks the pen, shift-click flood-fills. Each 8×8 cell has a foreground and a background colour. Height and the blocking flag are shared with the C64 tile.':vic?
     'VIC-20 version. Left-click draws, right-click picks the pen, shift-click flood-fills. Each 4×8 cell has one colour of its own (pen 10); screen, border and auxiliary are shared by the whole screen. Height and the blocking flag are shared with the C64 tile.':
     'Left-click draws with the pen, right-click picks the pen from a pixel, shift-click flood-fills. Each 4×8 cell has its own three colors (the C64 colour-clash rule). The dashed diamond is the floor footprint: the bottom two cell rows of every tile.';
   buildTileList();buildPens();buildCellSw();redrawTile();
 }
-function tilePos(e){return{x:Math.floor(e.offsetX/TZX),y:Math.floor(e.offsetY/TZY)};}
+function tilePos(e){const w=tileView(T(),false).w;return{x:Math.floor(e.offsetX/(16*TZX/w)),y:Math.floor(e.offsetY/TZY),w};}
 let tpaint=false;
 tcan.oncontextmenu=e=>e.preventDefault();
 tcan.onmousedown=e=>{
-  const {x,y}=tilePos(e),t=T();if(x<0||x>15||y<0||y>=t.h*8)return;
-  cellSel=(y>>3)*4+(x>>2);
-  if(e.button===2){pen=tileView(t,false).px[y*16+x];buildTileTab();return;}
+  const {x,y,w}=tilePos(e),t=T();if(x<0||x>=w||y<0||y>=t.h*8)return;
+  cellSel=cellAt(x,y,w);
+  if(e.button===2){pen=tileView(t,false).px[y*w+x];buildTileTab();return;}
   const v=tileView(t,true);
-  if(e.shiftKey){flood(v.px,t.h,x,y,v.px[y*16+x],pen);dirty();buildTileTab();return;}
-  tpaint=true;v.px[y*16+x]=pen;dirty();buildTileTab();
+  if(e.shiftKey){flood(v.px,t.h,x,y,v.px[y*w+x],pen,w);dirty();buildTileTab();return;}
+  tpaint=true;v.px[y*w+x]=pen;dirty();buildTileTab();
 };
-tcan.onmousemove=e=>{if(!tpaint)return;const {x,y}=tilePos(e),t=T();if(x<0||x>15||y<0||y>=t.h*8)return;const v=tileView(t,true);if(v.px[y*16+x]!==pen){v.px[y*16+x]=pen;encCache=null;redrawTile();}};
+tcan.onmousemove=e=>{if(!tpaint)return;const {x,y,w}=tilePos(e),t=T();if(x<0||x>=w||y<0||y>=t.h*8)return;const v=tileView(t,true);if(v.px[y*w+x]!==pen){v.px[y*w+x]=pen;encCache=null;redrawTile();}};
 window.addEventListener('mouseup',()=>{if(tpaint){tpaint=false;dirty();buildTileTab();}});
-function flood(px,h,x,y,from,to){if(from===to)return;const st=[[x,y]];while(st.length){const[a,b]=st.pop();if(a<0||a>15||b<0||b>=h*8||px[b*16+a]!==from)continue;px[b*16+a]=to;st.push([a+1,b],[a-1,b],[a,b+1],[a,b-1]);}}
+function flood(px,h,x,y,from,to,w=16){if(from===to)return;const st=[[x,y]];while(st.length){const[a,b]=st.pop();if(a<0||a>=w||b<0||b>=h*8||px[b*w+a]!==from)continue;px[b*w+a]=to;st.push([a+1,b],[a-1,b],[a,b+1],[a,b-1]);}}
 $('tName').onchange=()=>{T().name=$('tName').value;dirty();buildTileList();};
 $('tH').onchange=()=>{ // resize keeping the bottom (floor) aligned
   const t=T(),nh=Math.max(1,Math.min(8,+$('tH').value|0)),d=nh-t.h;
   if(d>0){t.px=new Array(d*128).fill(-1).concat(t.px);t.cells=Array.from({length:4*d},()=>({...t.cells[0]})).concat(t.cells);}
   else if(d<0){t.px=t.px.slice(-d*128);t.cells=t.cells.slice(-d*4);}
-  vicResize(t,d);t.h=nh;cellSel=0;dirty();buildTileTab();
+  vicResize(t,d);c128Resize(t,d);t.h=nh;cellSel=0;dirty();buildTileTab();
 };
 $('tBlock').onchange=()=>{T().flags=($('tBlock').checked?1:0);dirty();};
-$('tFlip').onclick=()=>{const t=T(),v=tileView(t,true);for(let y=0;y<t.h*8;y++){const r=v.px.slice(y*16,y*16+16).reverse();for(let x=0;x<16;x++)v.px[y*16+x]=r[x];}
+$('tFlip').onclick=()=>{const t=T(),v=tileView(t,true),w=v.w;for(let y=0;y<t.h*8;y++){const r=v.px.slice(y*w,y*w+w).reverse();for(let x=0;x<w;x++)v.px[y*w+x]=r[x];}
   for(let r=0;r<t.h;r++){const c=v.cells.slice(r*4,r*4+4).reverse();for(let k=0;k<4;k++)v.cells[r*4+k]=c[k];}dirty();buildTileTab();};
 $('tClear').onclick=()=>{if(!confirm('Clear all pixels?'))return;tileView(T(),true).px.fill(-1);dirty();buildTileTab();};
 [1,2,3].forEach(k=>$('slot'+k).onclick=()=>{slot=k;buildCellSw();});
 $('cOwn').onchange=()=>{tileView(T(),true).cells[cellSel].own=$('cOwn').value;dirty();buildTileTab();};
-$('cAll').onclick=()=>{const v=tileView(T(),true),c=v.cells[cellSel],vic=machine==='vic';
-  v.cells.forEach(o=>{if(vic)o.fg=c.fg;else{o.c1=c.c1;o.c2=c.c2;o.c3=c.c3;}});dirty();buildTileTab();};
+$('cAll').onclick=()=>{const v=tileView(T(),true),c=v.cells[cellSel],vic=machine==='vic',c128=machine==='c128';
+  v.cells.forEach(o=>{if(c128){o.fg=c.fg;o.bg=c.bg;}else if(vic)o.fg=c.fg;else{o.c1=c.c1;o.c2=c.c2;o.c3=c.c3;}});dirty();buildTileTab();};
+let slot128='fg';
+$('slotFg').onclick=()=>{slot128='fg';buildCellSw();};$('slotBg').onclick=()=>{slot128='bg';buildCellSw();};
 $('vEdit').onclick=()=>{tileView(T(),true);dirty();buildTileTab();};
-$('vReset').onclick=()=>{if(!confirm('Discard the hand-edited VIC-20 version of this tile?'))return;delete T().vic;dirty();buildTileTab();};
+$('vReset').onclick=()=>{const c128=machine==='c128';if(!confirm(`Discard the hand-edited ${c128?'C128':'VIC-20'} version of this tile?`))return;delete T()[c128?'c128':'vic'];dirty();buildTileTab();};
 $('tmC64').onclick=()=>{machine='c64';showMachineSilently();buildTileTab();};
 $('tmVic').onclick=()=>{machine='vic';showMachineSilently();buildTileTab();};
+$('tmC128').onclick=()=>{machine='c128';showMachineSilently();buildTileTab();};
 function remapTiles(fn){P.maps.forEach(m=>{m.terr=m.terr.map(fn);m.obj=m.obj.map(fn);m.slab=fn(m.slab)||1;});}
 $('tNew').onclick=()=>{if(P.tiles.length>127)return alert('127 tiles maximum');const t=blankTile('new tile',2);block(t,8,0,()=>1);P.tiles.push(t);tileIdx=P.tiles.length-1;dirty();buildTileTab();};
 $('tDup').onclick=()=>{if(P.tiles.length>127)return alert('127 tiles maximum');const t=JSON.parse(JSON.stringify(T()));t.name+=' copy';P.tiles.splice(tileIdx+1,0,t);const at=tileIdx+1;remapTiles(v=>v>=at?v+1:v);tileIdx=at;dirty();buildTileTab();};
@@ -627,6 +689,8 @@ function exportMap(m){
   // VIC-20 shared colours (docs/PLATFORMS.md §3)
   const g=m.vic||(typeof vicAutoColours==='function'?vicAutoColours(P.tiles,m):{bg:0,border:0,aux:0});
   b[o+11]=g.bg;b[o+12]=g.border;b[o+13]=g.aux;
+  // C128 VDC: border<<4|empty-cell background, panel text<<4|panel background
+  if(typeof c128Header==='function'){const h=c128Header(m);b[o+14]=h[0];b[o+15]=h[1];}
   const nm=m.name.toUpperCase().slice(0,16);for(let i=0;i<16;i++)b[o+0x10+i]=i<nm.length?nm.charCodeAt(i)&127:0x20;
   for(let i=0;i<1024;i++){b[o+0x100+i]=m.terr[i];b[o+0x500+i]=m.hgt[i];b[o+0x900+i]=m.obj[i];}
   m.ents.slice(0,32).forEach((e,k)=>b.set([e.type,e.x,e.y,e.sprite,e.color,e.hp,e.atk,e.def],o+0xD00+k*8));
@@ -652,6 +716,11 @@ $('btnExport').onclick=async()=>{
   if(vt.length-2>VTILES_MAX){alert('VIC-20 tileset is over its 4K budget at $7000; skipped vtiles.prg.');return;}
   await new Promise(r=>setTimeout(r,300));download('vtiles.prg',vt);
   await new Promise(r=>setTimeout(r,300));download('vsprites.prg',vicExportSprites());
+  // C128: tiles converted with the first map's background colour
+  const ct=c128ExportTiles(P.tiles,P.maps[0].bg);
+  if(ct.length-2>CTILES_MAX){alert('C128 tileset is over its 10K budget at $9800; skipped ctiles.prg.');return;}
+  await new Promise(r=>setTimeout(r,300));download('ctiles.prg',ct);
+  await new Promise(r=>setTimeout(r,300));download('csprites.prg',c128ExportSprites());
 };
 $('btnSave').onclick=()=>download('iso64-project.json',JSON.stringify(P),'application/json');
 $('btnOpen').onclick=()=>$('fileIn').click();

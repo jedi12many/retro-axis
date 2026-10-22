@@ -2,7 +2,7 @@
 
 **Goal:** one game, the same maps and editor, on every major retro platform. Each machine gets an engine that makes the most of its hardware. All of them read the same map files and play by the same rules.
 
-This document is the spec for how that's organised. It also specifies two concrete targets: C64 capability tiers (stock, REU, Ultimate turbo) and the VIC-20.
+This document is the spec for how that's organised. It also specifies three concrete targets: C64 capability tiers (stock, REU, Ultimate turbo), the VIC-20 and the C128's 80-column VDC.
 
 ## 0. Strategy (decided 2026-10-21)
 
@@ -35,6 +35,7 @@ Period games targeted the minimum configuration to reach the most buyers. ISO64 
 editor/            one editor for all machines
   index.html         maps, entities, C64 tiles (the master art)
   vic20.js           VIC-20 model: tile conversion, preview, export
+  c128.js            C128 80-column (VDC) model: tile conversion, preview, export
   <platform>.js      one module per further platform, same shape
 engine/
   common/            6502 code shared by every 6502 machine
@@ -44,6 +45,7 @@ engine/
                        dirty strips for scrolling, back-to-front draw order
   c64/               C64 platform layer (bitmap, double buffer, sprites)
   vic20/             VIC-20 platform layer (dynamic character set, soft sprites)
+  c128/              C128 80-column platform layer (VDC bitmap, block copies, soft sprites)
   <platform>/        one folder per machine
 test/              6502 emulator + per-platform harnesses that diff each engine's
                    screen against the editor's preview, frame by frame
@@ -87,7 +89,7 @@ Ordered by how much code carries over, and by how well the hardware suits this k
 | 2 | **VIC-20** (PAL, +32K) | 6502 | Custom multicolour characters rebuilt per frame, soft sprites | common/ | Working (v1) |
 | 3 | **C64 + REU / Ultimate** (lead target, §0) | 6502 | Same as C64 plus a pre-rendered world in REU (§4) | c64/ | REU tier working; smooth scrolling next |
 | 4 | Commodore Plus/4, C16 (+64K) | 6502 (7501) | 121-colour TED; character mode or bitmap | common/, VIC-20 character renderer | Planned |
-| 5 | C128 | 8502 | Runs the C64 build; optional 2 MHz in the border | c64/ | Free via C64 mode |
+| 5 | **C128 80-column** (64 KB VDC, 2 MHz) | 8502 | VDC bitmap with attributes; strips composed in RAM, scrolling by VDC block copy, soft sprites (§7). In C64 mode it also runs the C64 build | common/, VIC-20 compose code | Working (v1) |
 | 6 | Atari 400/800/XL/XE | 6502 | ANTIC character modes with display-list scrolling, player/missile sprites | common/ | Planned |
 | 7 | BBC Micro / Master | 6502 | Mode 1/2 bitmap; tiles drawn with a shifted blitter | common/ | Planned |
 | 8 | Apple II | 6502 | Hi-res, 7-pixel bytes with colour artefacts, so the art needs its own conversion | common/ | Planned |
@@ -113,7 +115,7 @@ The editor offers a preview for every **platform flavor** we build: each machine
 | C64 + REU | The same frames, with smooth 50 fps walking between steps |
 | C64 Ultimate (REU + turbo + 2 SIDs) | The REU preview plus each Ultimate-only feature as it lands: figures drawn behind walls, animated tiles, larger maps |
 | VIC-20 (24K or more) | Exact frame (`editor/vic20.js`) |
-| C128 80-column VDC (64 KB VDC) | Exact frame (`editor/c128.js`, in progress) |
+| C128 80-column VDC (64 KB VDC) | Exact frame (`editor/c128.js`) |
 
 **Implementation:** the C64 / VIC-20 Machine toggle becomes a flavor list. Each flavor declares its machine module (for tile conversion, hand edits and export) and its feature flags (smooth walking, figure depth, animated tiles, …). The preview honours the flags. The C64 tiers share one tile set; only the preview behaviour differs. This lands after the C128 branch merges, so the toggle is reworked once.
 
@@ -129,7 +131,8 @@ The engine-neutral fields are unchanged. Free header bytes carry per-platform se
 | `$0b` | VIC-20 screen colour (0–15) |
 | `$0c` | VIC-20 border colour (0–7) |
 | `$0d` | VIC-20 auxiliary colour (0–15) |
-| `$0e-$0f` | reserved for the next platform |
+| `$0e` | C128: background colour of empty cells (bits 4–7), border colour R26 (bits 0–3) |
+| `$0f` | C128: side panel attribute: background (bits 4–7), text (bits 0–3) |
 | `$10-$1f` | name |
 
 If more platforms need settings than fit here, version 2 adds a tagged extension block after `$e00`, which older engines ignore.
@@ -272,3 +275,71 @@ The rules layer is small today: movement, blocking and bumping. Combat, AI and s
   - The biggest remaining costs are `draw_tile` (~35%: about 250 masked cell draws for a 4-column strip), emit with its lookups (~25%), and the scroll copy (~11%).
 - **Joystick:** works. The harness plays 10 stick moves, including diagonals.
 - **VIC-20 tiles** are converted with MAP01's shared colours. Maps with a different palette should use hand-edited VIC-20 tiles, which don't depend on the palette.
+
+## 7. C128 80-column engine (VDC) v1
+
+**Target:** a fully loaded C128: C128DCR, or a C128 upgraded to 64 KB of VDC RAM, PAL, in C128 mode at 2 MHz, on an RGBI monitor. Only the VDC is used. At 2 MHz the VIC-II picture breaks up, so the engine switches the VIC-II display off and runs at 2 MHz the whole time. An REU is allowed but not needed: 64 KB of VDC RAM holds everything (below).
+
+**Display.** VDC bitmap mode with attributes: 640×200 pixels, and each 8×8 cell has a foreground and a background colour out of the 16 RGBI colours. The attribute byte is `background << 4 | foreground`. As in text mode the low nibble is the foreground; VICE confirmed this, since the first build had the nibbles the other way round. A VDC cell is 8 pixels wide, the same pixel count as a C64 multicolour cell, so the diamond grid stays 4×2 cells and `common/view.s` works unchanged. Physically the art is half as wide as on the C64, because 80 columns span the width that 40 do there.
+
+| Area | Cells | Contents |
+|---|---|---|
+| Viewport | columns 0–61, rows 0–24 (62×25, against the C64's 24×18) | the map; the player's tile at column 29, row 11 |
+| Side panel | columns 62–79 | a separator line, `ISO64`, `C128 VDC`, the map name, `POS xx,yy`, and the key layout |
+
+**Tiles.** `editor/c128.js` converts each C64 multicolour cell (4 double-wide pixels in 4 colours) into a hi-res cell:
+- **Colour pair.** It picks the fg/bg pair, with the brighter colour as foreground, that best fits the cell's colours. Every colour can be shown at 5 dither levels between the pair (0, ¼, ½, ¾, 1).
+- **Distance.** The fit uses a luma + chroma distance. The redmean distance, used for the VIC-20, turned the C64's soft greens into grey dithers.
+- **Pixels.** Each colour is then drawn with a 2×2 ordered (Bayer) dither. Each double-wide pixel becomes 2 hi-res pixels, and the dither phase is tied to the screen, so neighbouring cells line up.
+
+Any tile can be hand-edited as `tile.c128`: 32 hi-res pixels per line (-1 transparent, 0 background, 1 foreground) and a fg/bg pair per cell. The cell types are the same as the C64's: opaque, masked writing its attribute, and masked keeping the attribute below.
+
+**Figures** are soft sprites, like the VIC-20's. Each sprite pixel is 2 hi-res pixels. Outline pixels clear the bit (they show the cell's background), body pixels set it, and skin is dithered. A cell with body or skin pixels takes the figure's colour as its foreground. Entities are drawn back to front by x+y, and the hero last.
+
+**Rendering (the choice).** The three options were: compose everything in C128 RAM and push it through `$d600/$d601`; use the VDC's own hardware; or pre-render the world into an REU. The engine uses a mix of the first two.
+
+| VDC RAM | Contents |
+|---|---|
+| `$0000` / `$3e80` | frame A: bitmap (80×200 bytes), attributes (80×25) |
+| `$4800` / `$8680` | frame B |
+| `$9000` / `$ce80` | frame C, the **clean frame**: the current picture without figures |
+
+Each step (`render_scroll`):
+1. **Strips in RAM.** `view_scroll` and `draw_all` (common) compose only the newly exposed strips into a 62×25-cell buffer in C128 RAM, using the VIC-20's `draw_tile`. Cells outside the strips are never read, so nothing is scroll-copied in RAM.
+2. **Shift in VDC RAM.** VDC block copies fill the hidden frame from C, shifted by the scroll: one copy per pixel line and one per attribute row, viewport only, so the panel stays.
+3. **Upload.** The strips go up into the hidden frame through `$d601`, about 1–1.8 KB.
+4. **Save the clean frame.** C ← hidden frame, one 18,000-byte block copy. The panel's position text is written just before this.
+5. **Figures.** Each figure's 4×4-cell block (clipped) is read back from the hidden frame line by line, masked, and written back.
+6. **Flip.** At the start of vertical blank (status bit 5), the display start R12/R13 and attribute start R20/R21 switch to the hidden frame.
+
+Nothing is ever written into the frame on show, so no half-drawn frame can appear. A bump redraws figures only: hidden ← C, then figures, then the flip.
+
+- **Why not compose everything in RAM:** pushing the whole 12.4 KB viewport through `$d601` costs about 12k bytes × ~30 cycles a step. Block copies cost the CPU a few register writes per line.
+- **Why not pre-render the world:** the C64 REU approach. For this viewport the world image is 184×85 cells, about 125 KB plus attributes, too big for VDC RAM. From an REU it would still have to be pushed through `$d601` byte by byte, since the REU can't reach VDC RAM.
+- **Not used yet:** R27 (row increment) and the smooth-scroll registers. With a virtual screen they could give smooth scrolling later, like the C64 REU tier, if the figures and the panel are handled.
+
+**C128 RAM (bank 0, MMU `$ff00` = `$0e`).** BASIC stub and code from `$1c01` (the linker stops at `$4000`). Then `COLM`/`ROWM`/`COL4` from `$4000`, the figure list from `$4300`, `MAP01` at `$4c00`, the compose buffer at `$5a00`/`$8a80`, `CSPRITES` at `$9100` and `CTILES` at `$9800` (10 KB budget). Loading uses `SETBNK` `$ff68` (bank 0) before `LOAD`. After loading, the engine installs its own IRQ handler: it acknowledges the interrupt, calls `SCNKEY`, and leaves through `$ff33`. `GETIN` reads the keys.
+
+**Files** (written by **Export PRGs**):
+
+| File | Load address | Contents |
+|---|---|---|
+| `ctiles.prg` | `$9800` | the C64 TILES layout with VDC cells: type, attribute, 8 bitmap bytes, 8 mask bytes (none for opaque cells) |
+| `csprites.prg` | `$9100` | 4 figures pre-shifted into 4×4 cells (8 bitmap + 8 mask bytes each), per-cell flags at `$9500`, C64 → RGBI colour table at `$9540`, panel font (ASCII 32–95) at `$9600` |
+
+Map files are shared; header bytes `$0e-$0f` hold the C128 colours (§3).
+
+**Status: v1 done.**
+- **Harness.** `node test/c128-test.js` models the VDC: register file, 64 KB RAM, update address with auto-increment on R31 reads and writes, block copy and fill through R30/R24/R32-R33, and the vertical-blank status bit. It plays 61 key moves (every direction, blocked moves, bumps) and 10 joystick moves.
+  - After every move, all 80×25 cells of the shown frame (bitmap and attributes, panel included) must equal the editor's C128 preview. They do.
+  - It also fails if anything is written into the frame on show, or if a display register changes outside vertical blank.
+- **VICE.** `x128 -80col -VDC64KB` (`engine/c128/run-vice.cmd`). Headless screenshots, `-limitcycles 20000000 -exitscreenshot`, were taken at the start and after `-keybuf w`. `node test/c128-vice-compare.js` matched both against the editor's PNGs: **0 of 128,000 pixels differ**.
+- **Timing** (harness, 2 MHz):
+  - A step costs 160k–440k cycles, 80–220 ms, average 150 ms. Boot to the first frame is 2.2M cycles, about 1.1 s.
+  - Profile of a step right (`node test/profile.js c128 d`): `draw_tile` 23%, the four figures' read-mask-write 19%, the strip upload 12%, waiting for vertical blank 11%, VDC register set-up 15%.
+  - The harness counts block copies as instant. On real hardware the VDC copies in its own free memory cycles while the CPU waits on the status bit, so real steps will be slower by roughly 30 KB of copying per step. That needs measuring on a real C128DCR.
+- **Colour clash.** The editor counts cells where a pixel shows another colour than it was drawn with (about 180 of 1,550 on the demo map at the start). **Highlight colour clash** marks them.
+- **Next:**
+  - Smooth scrolling with R24/R25 fine scroll and a virtual screen.
+  - Measuring real VDC copy speed.
+  - Panel content: hit points, messages.
