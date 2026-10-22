@@ -11,8 +11,9 @@ build/
 # test screenshots, logs and dumps
 test/out/
 
-# local app / editor settings
-.claude/
+# local app / editor settings (project skills in .claude/skills/ are tracked)
+.claude/*
+!.claude/skills/
 .vscode/
 .DS_Store
 Thumbs.db
