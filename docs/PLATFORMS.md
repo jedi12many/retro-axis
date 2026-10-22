@@ -103,6 +103,22 @@ Each `editor/<platform>.js` follows the VIC-20 module's shape:
 3. **Preview renderer** using the same placement and draw order, plus feasibility counters (characters used, colour clash, memory).
 4. **Exporter** for that platform's tile file. Maps stay shared.
 
+### Every flavor gets a preview (rule)
+
+The editor offers a preview for every **platform flavor** we build: each machine plus its hardware tier. Each preview shows what that configuration actually does, so differences between flavors are visible while designing maps.
+
+| Flavor | Preview shows |
+|---|---|
+| C64 (stock) | Exact frame; cell steps |
+| C64 + REU | The same frames, with smooth 50 fps walking between steps |
+| C64 Ultimate (REU + turbo + 2 SIDs) | The REU preview plus each Ultimate-only feature as it lands: figures drawn behind walls, animated tiles, larger maps |
+| VIC-20 (24K or more) | Exact frame (`editor/vic20.js`) |
+| C128 80-column VDC (64 KB VDC) | Exact frame (`editor/c128.js`, in progress) |
+
+**Implementation:** the C64 / VIC-20 Machine toggle becomes a flavor list. Each flavor declares its machine module (for tile conversion, hand edits and export) and its feature flags (smooth walking, figure depth, animated tiles, …). The preview honours the flags. The C64 tiers share one tile set; only the preview behaviour differs. This lands after the C128 branch merges, so the toggle is reworked once.
+
+A new feature counts as done only when its flavor's preview shows it, alongside the engine harness passing.
+
 ## 3. Shared map header (v1, `$e00` bytes)
 
 The engine-neutral fields are unchanged. Free header bytes carry per-platform settings:
