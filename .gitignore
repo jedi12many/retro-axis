@@ -1,0 +1,18 @@
+# assembler output (rebuilt by engine/<platform>/build.cmd)
+engine/*/engine.prg
+engine/*/engine.lst
+engine/*/engine.lbl
+*.o
+
+# ready-to-copy SD card files and demo data written by the tests;
+# shipped through GitHub Releases instead
+build/
+
+# test screenshots, logs and dumps
+test/out/
+
+# local app / editor settings
+.claude/
+.vscode/
+.DS_Store
+Thumbs.db
