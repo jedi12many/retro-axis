@@ -1,12 +1,13 @@
 // Minimal 6502 core (official opcodes, no decimal mode) for headless engine tests.
 // Counts real cycles (incl. page-cross and taken-branch penalties) in c.cyc.
 // c.io(addr) may return a value for reads in c.ioLo..c.ioHi (default $d000-$dfff),
-// e.g. the raster line.
+// e.g. the raster line. c.iow(addr, value) may take writes in the same range
+// (return true to keep them out of mem), e.g. the C128's VDC ports.
 module.exports = function makeCPU(mem) {
   const c = { a: 0, x: 0, y: 0, sp: 0xfd, pc: 0, n: 0, v: 0, z: 0, cf: 0, i: 1, d: 0, cycles: 0, cyc: 0, io: null, ioLo: 0xd000, ioHi: 0xe000 };
   let pen = 0;
   const rd = a => { a &= 0xffff; if (c.io && a >= c.ioLo && a < c.ioHi) { const v = c.io(a); if (v !== undefined) return v; } return mem[a]; };
-  const wr = (a, v) => { mem[a & 0xffff] = v & 255; };
+  const wr = (a, v) => { a &= 0xffff; if (c.iow && a >= c.ioLo && a < c.ioHi && c.iow(a, v & 255)) return; mem[a] = v & 255; };
   const rd16 = a => rd(a) | (rd(a + 1) << 8);
   const zp16 = a => rd(a & 255) | (rd((a + 1) & 255) << 8);
   const nz = v => { v &= 255; c.n = v >> 7; c.z = v === 0 ? 1 : 0; return v; };

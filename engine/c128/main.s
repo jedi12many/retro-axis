@@ -3,7 +3,7 @@
 ;  RAM, 2 MHz). Shared logic in ../common
 ;
 ;  The VDC shows a 640x200 bitmap with attributes: each 8x8 cell has a
-;  foreground and a background colour. The viewport is 62x25 cells (the
+;  foreground (attribute bits 0-3) and a background colour (bits 4-7). The viewport is 62x25 cells (the
 ;  same 4x2-cell diamonds as the C64), with a side panel in columns 62-79.
 ;
 ;  VDC RAM holds three full frames: A and B (double buffered display) and
@@ -55,8 +55,8 @@ TILES     = $9800
 
 .include "../common/defs.inc"
 
-M_C128A   = MAP+$0e        ; border << 4 | background of empty cells
-M_C128P   = MAP+$0f        ; panel text << 4 | panel background
+M_C128A   = MAP+$0e        ; background of empty cells << 4 | border
+M_C128P   = MAP+$0f        ; panel attribute: background << 4 | text
 M_NAME    = MAP+$10
 
 ; ---- viewport -----------------------------------------------------------
@@ -100,7 +100,7 @@ clra   = $69               ; attribute of an empty cell
 spx    = $6a               ; figure: left cell column of its 4x4 block
 spy    = $6b               ;         top cell row
 sid    = $6c
-sfg    = $6d               ;         colour << 4
+sfg    = $6d               ;         colour
 nvis   = $6e
 fca    = $6f               ; figure: visible block columns fca..fcb
 fcb    = $70
@@ -173,6 +173,11 @@ start:
         sta CINV+1
         cli
 
+        ldx #8                    ; position text template
+@pt:    lda t_pos,x
+        sta PBUF,x
+        dex
+        bpl @pt
         ldx #0                    ; COLM, ROWM, COL4
         txa
 @z:     sta COLM,x
@@ -269,17 +274,14 @@ vdc_init:
         ora #$c0
         VPUT 25
         lda M_C128A               ; border
-        lsr
-        lsr
-        lsr
-        lsr
+        and #$0f
         VPUT 26
         rts
 
 ; clean_init: frame C = empty viewport + side panel, copied to A and B
 clean_init:
         lda M_C128A
-        and #$0f
+        and #$f0
         sta clra
         lda #<AT_C
         sta vd
@@ -767,9 +769,8 @@ upload_dirty:
 
 ; ---------------------------------------------------------------------
 ; shift_copy: hidden frame <- C shifted by dcol/drow cells (the part of
-; the viewport that is still on screen). A pure row scroll is one copy of
-; whole lines (the panel comes along unchanged); otherwise one copy per
-; line and per attribute row.
+; the viewport that is still on screen): one copy per line and per
+; attribute row, so the side panel stays where it is.
 shift_copy:
         lda dcol
         bmi @cn
@@ -799,37 +800,7 @@ shift_copy:
         sec
         sbc sro
         sta nrow
-        lda dcol
-        bne @lines
-        ; rows only: bitmap nrow*640 bytes, attributes nrow*80
-        ldx dro
-        lda r640lo,x
-        sta vd
-        lda r640hi,x
-        clc
-        adc hbm
-        sta vd+1
-        ldx sro
-        lda r640lo,x
-        sta vs
-        lda r640hi,x
-        clc
-        adc #>BM_C
-        sta vs+1
-        ldx nrow
-        lda r640lo,x
-        sta vn
-        lda r640hi,x
-        sta vn+1
-        jsr lin_copy
-        jsr shift_attr_ptrs
-        ldx nrow
-        lda r80lo,x
-        sta vn
-        lda r80hi,x
-        sta vn+1
-        jmp lin_copy
-@lines: lda #VP_COLS              ; bytes per line
+        lda #VP_COLS              ; bytes per line
         sec
         sbc dco
         sec
@@ -1191,10 +1162,6 @@ figures:
         and #15
         tax
         lda C2R,x
-        asl
-        asl
-        asl
-        asl
         sta sfg
         lda ENTS+E_X,y
         sta tx
@@ -1210,10 +1177,6 @@ figures:
         and #15
         tax
         lda C2R,x
-        asl
-        asl
-        asl
-        asl
         sta sfg
         lda px
         sta tx
@@ -1392,7 +1355,7 @@ place_fig:
         cmp #8
         bne @ln
         lda spy                   ; attributes: cells with body pixels take
-        clc                       ; the figure colour as foreground
+        clc                       ; the figure colour as foreground (bits 0-3)
         adc fro
         tax
         lda r80lo,x
@@ -1433,7 +1396,7 @@ place_fig:
         lsr
         bcc @cn
         lda LB,x
-        and #$0f
+        and #$f0
         ora sfg
         sta LB,x
 @cn:    iny
@@ -1557,10 +1520,7 @@ plat_flash:
         dex
         bne @d1
         lda M_C128A
-        lsr
-        lsr
-        lsr
-        lsr
+        and #$0f
         VPUT 26
         rts
 
@@ -1599,6 +1559,7 @@ t_sub:    .byte "C128 VDC"
 t_k1:     .byte "Q W E"
 t_k2:     .byte "A + D"
 t_k3:     .byte "Z S C"
+t_pos:    .byte "POS 00,00"
 
 cbrowlo:                          ; compose row offsets
 .repeat VP_ROWS, I
