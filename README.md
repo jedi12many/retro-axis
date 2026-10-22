@@ -9,7 +9,9 @@ An isometric turn-based RPG engine for retro computers. It currently runs on the
 Open `editor/index.html` in a browser. Opening the file directly works, as does `python -m http.server 8064 --directory editor`. Your work autosaves to the browser's local storage.
 
 - **Map tab:** paint terrain, place objects, raise or lower ground, block cells, place entities and the player start. The preview is each engine's own algorithm, so colour clash shows up exactly as it will on the machine.
-- **Machine toggle (C64 / VIC-20 / C128)**, above the preview and in the Tiles tab.
+- **Flavor list** above the preview: **C64**, **C64 + REU**, **C64 Ultimate**, **VIC-20 (24K+)** and **C128 80-col**. Each flavor previews exactly what that hardware configuration shows.
+  - **C64 + REU** and **C64 Ultimate** play the engine's smooth walk whenever the camera moves one square (arrow keys, right-click, Camera tool, or **Play a step**). It uses the engine's two speeds: a straight step takes 8 or 16 frames. Every in-between frame is pieced together exactly from the world before and after the step. The Ultimate flavor will also show Ultimate-only features as they're built.
+  - The **Tiles tab** has a machine toggle (C64 / VIC-20 / C128), because flavors of the same machine share one tile set.
   - **In the Map tab**, the VIC-20 view renders the same map under VIC-20 limits. It counts the characters each frame needs and can highlight colour clash. **Auto-pick colours** chooses the screen, border and auxiliary colours that suit the map.
   - **In the Map tab**, the C128 view shows the 80-column VDC screen: a 640×200 bitmap where each 8×8 cell has two of the 16 RGBI colours, plus the side panel. Tiles are converted automatically, with the best colour pair per cell and ordered dithering. It counts colour clash and can highlight it. You can also set the empty-cell, border and panel colours.
   - **In the Tiles tab**, the toggle edits a tile's VIC-20 or C128 version by hand.

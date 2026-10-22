@@ -117,7 +117,11 @@ The editor offers a preview for every **platform flavor** we build: each machine
 | VIC-20 (24K or more) | Exact frame (`editor/vic20.js`) |
 | C128 80-column VDC (64 KB VDC) | Exact frame (`editor/c128.js`) |
 
-**Implementation:** the C64 / VIC-20 Machine toggle becomes a flavor list. Each flavor declares its machine module (for tile conversion, hand edits and export) and its feature flags (smooth walking, figure depth, animated tiles, …). The preview honours the flags. The C64 tiers share one tile set; only the preview behaviour differs. This lands after the C128 branch merges, so the toggle is reworked once.
+**Implementation (done):** `FLAVORS` in `editor/index.html` lists each flavor: its machine module (for tile conversion, hand edits and export), a description, and its feature flags. Today the only flag is `walk: 'step' | 'smooth'`; figure depth and animated tiles will be added as they land.
+- **The preview honours the flags.** On the smooth flavors, any one-square camera move plays the engine's walk at its fine-step rate: 2 hires pixels and 1 line per fine step, 1 or 2 fine steps per frame. Each in-between frame is pieced together from the frames before and after the step.
+- **Why that's exact:** a clipped render is a window of the world. A check over 56 steps (1.34M overlapping pixels) found the two frames agree everywhere they overlap.
+- **Sprite motion** in the preview is linear.
+- **Tiles:** the C64 tiers share one tile set. The Tiles tab keeps a per-machine toggle.
 
 A new feature counts as done only when its flavor's preview shows it, alongside the engine harness passing.
 

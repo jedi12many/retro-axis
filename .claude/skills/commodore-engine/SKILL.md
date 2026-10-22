@@ -58,7 +58,7 @@ The common code calls these. A platform's own zero page starts at `$60`.
 2. **Every platform flavor gets an editor preview** (PLATFORMS.md, "Every flavor gets a preview"):
    - the flavors are C64 stock, C64 + REU (smooth walking), C64 Ultimate (REU + Ultimate-only features), VIC-20 and C128 VDC;
    - a feature counts as done only when its flavor's preview shows it **and** the harness passes;
-   - the Machine toggle is planned to become a flavor list once the C128 branch merges.
+   - the flavors live in `FLAVORS` in `editor/index.html` (a machine module + feature flags; `walk: 'smooth'` plays the REU walk). Add a flag there when a flavor-only feature lands, and make the preview honour it.
 3. **The shared map format** (`mapxx.prg`, `$e00` bytes, 32×32) is identical on every machine. Per-platform settings go in free header bytes (`$0b-$0f`); a v2 tagged block is planned for more. Don't fork the map format per machine.
 4. **Same picture on every C64 tier.** Stock, REU and turbo differ only in speed and smoothness, unless the feature is explicitly flavor-only and has its own preview.
 5. **Load files through KERNAL `LOAD`, by wildcard, with lowercase host names.**

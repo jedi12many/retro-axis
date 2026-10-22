@@ -66,9 +66,13 @@ canvas.px{image-rendering:pixelated;display:block}
       <canvas id="grid" width="512" height="512"></canvas></div>
   </div>
   <div class="col">
-    <div class="row"><label>Machine</label><button id="mchC64" class="on">C64</button><button id="mchVic">VIC-20</button><button id="mchC128">C128 80-col</button></div>
-    <div class="box" id="c64Box"><h3>C64 preview — exact engine output (click to paint here too · arrow keys move camera)</h3>
+    <div class="row"><label>Flavor</label><span id="flavorBtns"></span></div>
+    <div class="hint" id="flavorInfo" style="margin:-4px 0 4px 62px"></div>
+    <div class="box" id="c64Box"><h3 id="c64Title">C64 preview — exact engine output (click to paint here too · arrow keys move camera)</h3>
       <canvas id="prev" class="px" width="320" height="200" style="width:640px;height:400px"></canvas>
+      <div class="row" id="walkRow" hidden><label>Walk speed</label>
+        <select id="walkSpeed"><option value="1">normal: 2 fine steps per frame (straight step 160 ms)</option><option value="0">fine: 1 fine step per frame (320 ms)</option></select>
+        <button id="walkDemo">Play a step</button></div>
       <div class="hint" id="prevInfo"></div></div>
     <div class="box" id="vicBox" hidden><h3>VIC-20 preview — custom multicolour character set, 22×23 PAL screen, PAL pixel shape (click to paint · arrow keys move camera)</h3>
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
@@ -397,7 +401,7 @@ function applyTool(x,y,first){
     case'lower':if(!first)return;m.hgt[i]=(m.hgt[i]&0x80)|Math.max(0,(m.hgt[i]&3)-1);break;
     case'block':if(!first)return;m.hgt[i]^=0x80;break;
     case'start':m.start={x,y};break;
-    case'camera':cam={x,y};break;
+    case'camera':if(first)walkTo(x,y);return;
     case'pick':brush=m.obj[i]||m.terr[i]||brush;buildPalette();return;
     case'entity':{if(!first)return;
       const ex=m.ents.findIndex(e=>e.x===x&&e.y===y);
@@ -425,26 +429,90 @@ function redrawGrid(){
   gctx.strokeStyle='#ff0';gctx.strokeRect(cam.x*S+.5,cam.y*S+.5,S-1,S-1);
 }
 const prev=$('prev'),pctx=prev.getContext('2d'),fb=newFB();
-function redrawPreview(){
+// the map picture seen from camera cx,cy (no sprites)
+function c64WorldImage(cx,cy){
   const m=M();fb.bmp.fill(0);fb.scr.fill(0);fb.col.fill(0);
-  renderMap(fb,m,enc(),cam.x,cam.y);
-  const img=pctx.createImageData(320,200);fbToImage(fb,m.bg,img);
-  // sprites: same rules as place_sprites (hero sprite at camera position)
-  const hh=m.hgt[cam.y*MW+cam.x]&3;
-  drawSprite(img,0,m.hero,CENTER_COL*8+4,(CENTER_ROW-hh)*8-9);
+  renderMap(fb,m,enc(),cx,cy);
+  const img=pctx.createImageData(320,200);fbToImage(fb,m.bg,img);return img;
+}
+// sprites as place_sprites puts them; ox,oy shift the entities during a walk
+function c64Sprites(img,cx,cy,ox=0,oy=0,heroY=null){
+  const m=M(),hh=m.hgt[cy*MW+cx]&3;
+  drawSprite(img,0,m.hero,CENTER_COL*8+4,heroY??(CENTER_ROW-hh)*8-9);
   let used=1;
   for(const e of m.ents){if(used>=8)break;if(!e.type||e.type===4)continue;
-    const {col,row}=project(e.x,e.y,cam.x,cam.y),r=row-(m.hgt[e.y*MW+e.x]&3);
+    const {col,row}=project(e.x,e.y,cx,cy),r=row-(m.hgt[e.y*MW+e.x]&3);
     if(col<VP.c0||col>28||r<VP.r0||r>VP.r1)continue;
-    drawSprite(img,e.sprite,e.color,col*8+4,r*8-9);used++;}
+    drawSprite(img,e.sprite,e.color,col*8+4-ox,r*8-9-oy);used++;}
+  return used;
+}
+function redrawPreview(){
+  if(walkTimer)return;            // a walk animation owns the canvas until it ends
+  const m=M(),img=c64WorldImage(cam.x,cam.y),used=c64Sprites(img,cam.x,cam.y);
+  const hh=m.hgt[cam.y*MW+cam.x]&3;
   pctx.putImageData(img,0,0);
   // border (outside viewport is the border colour only in the editor's eyes; on the C64 it is bitmap)
   pctx.strokeStyle=PAL[m.border];pctx.strokeRect(VP.c0*8-.5,VP.r0*8-.5,(VP.c1-VP.c0+1)*8+1,(VP.r1-VP.r0+1)*8+1);
-  $('prevInfo').textContent=`Camera/hero at ${cam.x},${cam.y} (height ${hh}). Sprites on screen: ${used}/8. On the C64 the hero stands here; the joystick moves along the map axes, diagonals give straight screen moves.`;
+  $('prevInfo').textContent=`Camera/hero at ${cam.x},${cam.y} (height ${hh}). Sprites on screen: ${used}/8. On the C64 the hero stands here; the joystick moves along the map axes, diagonals give straight screen moves.`+
+    (FL().walk==='smooth'?' Moving the camera one square plays the engine\'s smooth walk.':'');
 }
+// ---- smooth walk (C64 + REU / Ultimate flavors), as reu_walk plays it ----
+// One fine step = 2 hires pixels across and 1 line; 1<<ssh fine steps per frame (50 fps).
+// A clipped render is a window of the world, so each in-between frame is pieced
+// together from the frames before and after the step. Sprite motion is linear.
+let walkTimer=null;
+function walkTo(nx,ny){
+  const ox=cam.x,oy=cam.y,dx=nx-ox,dy=ny-oy;
+  if(FL().walk!=='smooth'||machine!=='c64'||Math.abs(dx)>1||Math.abs(dy)>1||(!dx&&!dy)){cam={x:nx,y:ny};redrawMap();return;}
+  if(walkTimer){clearInterval(walkTimer);walkTimer=null;}
+  const m=M(),A=c64WorldImage(ox,oy),B=c64WorldImage(nx,ny);
+  const Dx=16*(dx-dy),Dy=8*(dx+dy),N=Math.max(Math.abs(Dx)/2,Math.abs(Dy)),per=1<<(+$('walkSpeed').value);
+  const x0=VP.c0*8,x1=(VP.c1+1)*8,y0=VP.r0*8,y1=(VP.r1+1)*8;
+  const hA=(CENTER_ROW-(m.hgt[oy*MW+ox]&3))*8-9,hB=(CENTER_ROW-(m.hgt[ny*MW+nx]&3))*8-9;
+  let k=0;cam={x:nx,y:ny};redrawGrid();
+  const frame=()=>{
+    k=Math.min(N,k+per);const sx=Math.round(Dx*k/N/2)*2,sy=Math.round(Dy*k/N);
+    const img=pctx.createImageData(320,200),d=img.data,a=A.data,b=B.data;
+    d.set(b);                                       // outside the viewport: unchanged
+    for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
+      const qx=x+sx,qy=y+sy,o=(y*320+x)*4;
+      const s2=(qx>=x0&&qx<x1&&qy>=y0&&qy<y1)?((qy*320+qx)*4):(((qy-Dy)*320+(qx-Dx))*4);
+      const src=(qx>=x0&&qx<x1&&qy>=y0&&qy<y1)?a:b;
+      d[o]=src[s2];d[o+1]=src[s2+1];d[o+2]=src[s2+2];d[o+3]=255;}
+    c64Sprites(img,ox,oy,sx,sy,Math.round(hA+(hB-hA)*k/N));
+    pctx.putImageData(img,0,0);
+    $('prevInfo').textContent=`Walking ${ox},${oy} → ${nx},${ny}: frame ${Math.ceil(k/per)} of ${Math.ceil(N/per)} (${Math.ceil(N/per)*20} ms at 50 fps).`;
+    if(k>=N){clearInterval(walkTimer);walkTimer=null;redrawPreview();}
+  };
+  frame();walkTimer=setInterval(frame,20);
+}
+$('walkDemo').onclick=()=>{ // walk one screen-right step and back
+  const nx=Math.min(31,cam.x+1),ny=Math.max(0,cam.y-1),bx=cam.x,by=cam.y;walkTo(nx,ny);
+  setTimeout(()=>walkTo(bx,by),600);
+};
 // ---- VIC-20 preview (renderer in vic20.js) ----
-let machine='c64';
-try{machine=localStorage.getItem('iso64-machine')||'c64';}catch(e){}
+// Platform flavors (docs/PLATFORMS.md, "Every flavor gets a preview"): each is a
+// machine (tile set, conversion, export) plus the features its engine tier has.
+const FLAVORS=[
+  {id:'c64',     machine:'c64',  label:'C64',            walk:'step',
+   info:'Stock C64: double-buffered multicolour bitmap. Steps jump one square (about 175 ms each).'},
+  {id:'c64reu',  machine:'c64',  label:'C64 + REU',      walk:'smooth',
+   info:'C64 with an REU (1700/1750/1764, Ultimate II+ or Ultimate): the world is pre-rendered into the REU and walking scrolls smoothly at 50 fps. Same picture as stock.'},
+  {id:'c64ult',  machine:'c64',  label:'C64 Ultimate',   walk:'smooth',
+   info:'C64 Ultimate / Ultimate 64 (REU + turbo + 2 SIDs): everything the REU flavor does. Ultimate-only features (figures behind walls, animated tiles, larger maps) will show here as they land; none are built yet.'},
+  {id:'vic20',   machine:'vic',  label:'VIC-20 (24K+)',  walk:'step',
+   info:'VIC-20, PAL, 24K or more in blocks 1-3: a character set rebuilt every frame, soft-sprite figures.'},
+  {id:'c128vdc', machine:'c128', label:'C128 80-col',    walk:'step',
+   info:'C128 in 80 columns (VDC with 64 KB, 2 MHz): 640×200 with 2 RGBI colours per cell, soft-sprite figures.'},
+];
+let flavor='c64';
+try{flavor=localStorage.getItem('iso64-flavor')||({c64:'c64',vic:'vic20',c128:'c128vdc'})[localStorage.getItem('iso64-machine')]||'c64';}catch(e){}
+if(!FLAVORS.some(f=>f.id===flavor))flavor='c64';
+const FL=()=>FLAVORS.find(f=>f.id===flavor);
+let machine=FL().machine;
+function setFlavor(id){if(walkTimer){clearInterval(walkTimer);walkTimer=null;}flavor=id;machine=FL().machine;}
+// the Tiles tab picks a machine: keep the flavor if it is already on that machine
+function setMachine(mc){if(machine!==mc)setFlavor(FLAVORS.find(f=>f.machine===mc).id);}
 const vprev=$('vprev'),vctx=vprev.getContext('2d');
 function vicSettings(m){if(!m.vic){m.vic=vicAutoColours(P.tiles,m);save();}return m.vic;}
 function vicPicker(el,get,set,max){
@@ -478,13 +546,16 @@ function showMachine(){
 }
 function showMachineSilently(){
   $('c64Box').hidden=machine!=='c64';$('vicBox').hidden=machine!=='vic';$('c128Box').hidden=machine!=='c128';
-  $('mchC64').className=machine==='c64'?'on':'';$('mchVic').className=machine==='vic'?'on':'';$('mchC128').className=machine==='c128'?'on':'';
-  try{localStorage.setItem('iso64-machine',machine);}catch(e){}
+  const fb=$('flavorBtns');fb.innerHTML='';
+  FLAVORS.forEach(f=>{const b=document.createElement('button');b.textContent=f.label;b.title=f.info;b.className=f.id===flavor?'on':'';
+    b.onclick=()=>{setFlavor(f.id);showMachine();};fb.appendChild(b);});
+  $('flavorInfo').textContent=FL().info;
+  $('walkRow').hidden=FL().walk!=='smooth';
+  $('c64Title').textContent=`${FL().label} preview — exact engine output`+(FL().walk==='smooth'?', smooth walking':'')+' (click to paint here too · arrow keys move camera)';
+  try{localStorage.setItem('iso64-flavor',flavor);localStorage.setItem('iso64-machine',machine);}catch(e){}
 }
 function redrawPreviewAny(){if(machine==='vic')redrawVic();else if(machine==='c128')redrawC128();else redrawPreview();}
-$('mchC64').onclick=()=>{machine='c64';showMachine();};
-$('mchVic').onclick=()=>{machine='vic';showMachine();};
-$('mchC128').onclick=()=>{machine='c128';showMachine();};
+
 // ---- C128 preview (renderer in c128.js) ----
 const cprev=$('cprev'),cctx=cprev.getContext('2d');
 function c128Picker(el,get,set){
@@ -532,7 +603,7 @@ vprev.onmousemove=e=>{if(!painting)return;const p=vicPick(e);if(p)applyTool(p.x,
 function redrawMap(){redrawGrid();redrawPreviewAny();}
 let painting=false;
 grid.oncontextmenu=e=>e.preventDefault();
-grid.onmousedown=e=>{const x=e.offsetX>>4,y=e.offsetY>>4;if(e.button===2){cam={x,y};redrawMap();return;}painting=true;applyTool(x,y,true);};
+grid.onmousedown=e=>{const x=e.offsetX>>4,y=e.offsetY>>4;if(e.button===2){walkTo(x,y);return;}painting=true;applyTool(x,y,true);};
 grid.onmousemove=e=>{if(!painting)return;const x=e.offsetX>>4,y=e.offsetY>>4;if(x>=0&&y>=0&&x<32&&y<32)applyTool(x,y,false);};
 window.addEventListener('mouseup',()=>painting=false);
 function previewPick(e){ // inverse projection, ignores height
@@ -546,7 +617,7 @@ prev.onmousemove=e=>{if(!painting)return;const p=previewPick(e);if(p)applyTool(p
 window.addEventListener('keydown',e=>{
   if($('mapTab').hidden||/INPUT|SELECT/.test(document.activeElement.tagName))return;
   const d={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]}[e.key];
-  if(!d)return;e.preventDefault();cam={x:Math.max(0,Math.min(31,cam.x+d[0])),y:Math.max(0,Math.min(31,cam.y+d[1]))};redrawMap();
+  if(!d)return;e.preventDefault();walkTo(Math.max(0,Math.min(31,cam.x+d[0])),Math.max(0,Math.min(31,cam.y+d[1])));
 });
 $('mName').onchange=()=>{M().name=$('mName').value;dirty();buildMapSel();};
 $('mFile').onchange=()=>{M().file=$('mFile').value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,16)||'MAP';$('mFile').value=M().file;dirty();buildMapSel();};
@@ -654,9 +725,9 @@ let slot128='fg';
 $('slotFg').onclick=()=>{slot128='fg';buildCellSw();};$('slotBg').onclick=()=>{slot128='bg';buildCellSw();};
 $('vEdit').onclick=()=>{tileView(T(),true);dirty();buildTileTab();};
 $('vReset').onclick=()=>{const c128=machine==='c128';if(!confirm(`Discard the hand-edited ${c128?'C128':'VIC-20'} version of this tile?`))return;delete T()[c128?'c128':'vic'];dirty();buildTileTab();};
-$('tmC64').onclick=()=>{machine='c64';showMachineSilently();buildTileTab();};
-$('tmVic').onclick=()=>{machine='vic';showMachineSilently();buildTileTab();};
-$('tmC128').onclick=()=>{machine='c128';showMachineSilently();buildTileTab();};
+$('tmC64').onclick=()=>{setMachine('c64');showMachineSilently();buildTileTab();};
+$('tmVic').onclick=()=>{setMachine('vic');showMachineSilently();buildTileTab();};
+$('tmC128').onclick=()=>{setMachine('c128');showMachineSilently();buildTileTab();};
 function remapTiles(fn){P.maps.forEach(m=>{m.terr=m.terr.map(fn);m.obj=m.obj.map(fn);m.slab=fn(m.slab)||1;});}
 $('tNew').onclick=()=>{if(P.tiles.length>127)return alert('127 tiles maximum');const t=blankTile('new tile',2);block(t,8,0,()=>1);P.tiles.push(t);tileIdx=P.tiles.length-1;dirty();buildTileTab();};
 $('tDup').onclick=()=>{if(P.tiles.length>127)return alert('127 tiles maximum');const t=JSON.parse(JSON.stringify(T()));t.name+=' copy';P.tiles.splice(tileIdx+1,0,t);const at=tileIdx+1;remapTiles(v=>v>=at?v+1:v);tileIdx=at;dirty();buildTileTab();};
