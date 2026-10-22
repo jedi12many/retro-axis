@@ -112,8 +112,8 @@ The editor offers a preview for every **platform flavor** we build: each machine
 | Flavor | Preview shows |
 |---|---|
 | C64 (stock) | Exact frame; cell steps |
-| C64 + REU | The same frames, with smooth 50 fps walking between steps |
-| C64 Ultimate (REU + turbo + 2 SIDs) | The REU preview plus each Ultimate-only feature as it lands: figures drawn behind walls, animated tiles, larger maps |
+| C64 + REU | The same frames, with smooth 50 fps walking between steps. Optionally a **painted world** (below) |
+| C64 Ultimate (REU + turbo + 2 SIDs) | The REU preview plus a **custom 16-colour palette per map**, and each further Ultimate-only feature as it lands: figures drawn behind walls, animated tiles, larger maps |
 | VIC-20 (24K or more) | Exact frame (`editor/vic20.js`) |
 | C128 80-column VDC (64 KB VDC) | Exact frame (`editor/c128.js`) |
 
@@ -122,6 +122,24 @@ The editor offers a preview for every **platform flavor** we build: each machine
 - **Why that's exact:** a clipped render is a window of the world. A check over 56 steps (1.34M overlapping pixels) found the two frames agree everywhere they overlap.
 - **Sprite motion** in the preview is linear.
 - **Tiles:** the C64 tiers share one tile set. The Tiles tab keeps a per-machine toggle.
+
+### Painted world and custom palette (preview stage)
+
+The REU tier shows a pre-rendered world. Its art is therefore limited only by the VIC-II's rules, not by what the engine can draw in a step. The editor prototypes two upgrades for it, in `editor/painted.js`:
+
+- **Painted world** (`m.paint`; C64 + REU and C64 Ultimate flavors). The world is made in three passes:
+  1. **Compose the scene in full colour.** Every tile keeps its own colours; there's no colour clash while composing.
+  2. **Bake lighting in map space.** Light comes from map −x, the upper left of the screen. Walls, trees and raised ground cast shadows: an occluder d cells towards the light that rises at least d levels shades the floor, a 45° sun. There's also light contact shading next to taller neighbours. Because it's computed in map space, the result doesn't depend on the camera.
+  3. **Convert to legal C64 multicolour cells.** Each 4×8 cell picks the best 3 colours plus the shared `$d021` background. A pixel may also use a 50/50 checkerboard of two cell colours, which is how C64 artists shade: shadowed grass becomes green dithered with black instead of the nearest grey. For speed, each cell searches only its 7 most useful colours.
+
+  **Measurements:** about 30–40 ms per viewport. Average cell error is about 7k against 43k without mixes. The smooth walk stays exact on painted worlds: 24 steps, 572k overlapping pixels, 0 mismatches.
+- **Custom palette** (`m.ult.pal`; C64 Ultimate flavor only): 16 RGB colours per map, with presets Standard, Earthy, Dungeon, Desert and Night. The Ultimate loads them through the UCI command `$04 $52` (docs/research/ultimate.md). The palette applies to tiles, the painted world and the figures.
+
+**Engine work still to do** (the previews define the target):
+1. **Painted world.** Export each map's painted world image from the editor and load it into the REU instead of `world_build`. That's ~121 KB per map, so it suits UCI fast file access on the Ultimate; on a stock REU machine it's a longer load.
+2. **Palette.** Add a map-header field for the palette (the v2 tagged block, §3), and send it through UCI at map load. 🔧 Needs real hardware: VICE can't set the palette.
+
+**Known art issue:** some fully shadowed diamonds still fall back to a dark grey checker. A hue-preserving bias in the converter is the next tuning step.
 
 A new feature counts as done only when its flavor's preview shows it, alongside the engine harness passing.
 
