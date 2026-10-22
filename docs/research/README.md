@@ -10,6 +10,7 @@ How to get the most out of each machine ISO64 targets. Each claim carries a conf
 | [c128.md](c128.md) | VDC 8563/8568 (measured copy/fill/CPU-access speeds), MMU, 2 MHz, C128 KERNAL, burst loading |
 | [vic20.md](vic20.md) | 6561 VIC tricks, every RAM block, UltiMem and Final Expansion 3 banking |
 | [plus4-mega65.md](plus4-mega65.md) | Short notes on future flavors |
+| [petscii.md](petscii.md) | PETSCII games (PETSCII Robots and others), tools (Petmate, petmate9), measured glyph codes, character-mode techniques, and a PETSCII flavor for ISO64 |
 | [vice-tests/](vice-tests/) | The VICE probes behind the "VICE ✓" numbers (REU timing, VDC timing, machine detection) |
 
 ## Re-running the VICE probes

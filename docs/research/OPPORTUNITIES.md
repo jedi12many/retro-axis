@@ -201,6 +201,19 @@ Detect `$d030` = `$fc`/`$fd` (VICE ✓). A raster IRQ pair sets 2 MHz outside th
 
 See [plus4-mega65.md](plus4-mega65.md).
 
+## PETSCII
+
+Research: [petscii.md](petscii.md). Glyph codes and the diamond recipe: `.claude/skills/commodore-engine/references/petscii.md`.
+
+| # | Item | Flavor | Expected gain | Effort | Risk | VICE | Touches |
+|---|---|---|---|---|---|---|---|
+| P-1 | **PETSCII flavor (semigraphics)** | New flavor on C64, VIC-20, C128, and a PET port | No character set or tile art in RAM, so it runs on the PET and on lightly expanded VIC-20s. Full redraw ≈ 1 PAL frame on the C64. An authentic PETSCII look. | M | L | ✓ (`xpet`, `x64sc`, `xvic`) | new `engine/petscii/` (or a C64 build switch), `editor/petscii.js` (preview, clash counter, quarter-mask tiles), new harness |
+| P-2 | **PETSCII UI kit** | All flavors | Panels, HP/XP bars (eighth-step glyphs), combat log and menus with no art and the same text code everywhere | S–M | L | ✓ | `engine/common` (a text/panel module + platform `put_char`), UI-1 raster split on the C64 bitmap |
+| P-3 | **Petmate import** | Editor | Hand-drawn PETSCII stamps per tile (as in PETSCII Robots), from Petmate/petmate9 `.petmate` JSON | S | L | n/a | `editor/petscii.js` |
+| P-4 | **PET port** | PET (40 or 80 columns, monochrome) | One more Commodore. PETSCII Robots shows that one map file can run on the PET, VIC-20 and C64 | M (after P-1) | M (no colour, so tiles are told apart by pattern) | ✓ `xpet` | `engine/pet/`, PET KERNAL loading |
+
+The **diamond recipe is verified**: 8×4 quarter-pixels per floor diamond, which is 4×2 characters, the same grid as every flavor. At ISO64's tile offsets the diamonds tile the plane exactly.
+
 ## Needs real hardware (summary)
 
 - **Ultimate:**

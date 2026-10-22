@@ -1,6 +1,6 @@
 ---
 name: commodore-engine
-description: How to work on ISO64, the isometric RPG engine for Commodore machines (C64 stock / +REU / Ultimate turbo, VIC-20, C128 VDC, later Plus/4 and MEGA65). It covers hardware cheat-sheets (registers, memory maps, PAL/NTSC cycle budgets), proven tricks for squeezing these machines, and the project's conventions: shared engine/common plus a platform layer per machine, every engine matching its editor preview under the 6502 test harness, and every flavor getting an editor preview. It also gives the build, test and VICE commands, and the Windows quirks. Use it for any change to engine/*, editor/* or test/* in this repo, for planning a new platform or tier, for performance work (cycle counts, raster timing, REU/DMA, VDC, turbo), and for questions about C64, VIC-20, C128 or Ultimate 64 hardware, even if the user doesn't say "skill" or name a file.
+description: How to work on ISO64, the isometric RPG engine for Commodore machines (C64 stock / +REU / Ultimate turbo, VIC-20, C128 VDC, later Plus/4 and MEGA65). It covers hardware cheat-sheets (registers, memory maps, PAL/NTSC cycle budgets), proven tricks for squeezing these machines, and the project's conventions: shared engine/common plus a platform layer per machine, every engine matching its editor preview under the 6502 test harness, and every flavor getting an editor preview. It also gives the build, test and VICE commands, and the Windows quirks. Use it for any change to engine/*, editor/* or test/* in this repo, for planning a new platform or tier, for performance work (cycle counts, raster timing, REU/DMA, VDC, turbo), for PETSCII art, PETSCII games or character-mode rendering, and for questions about C64, VIC-20, C128, PET or Ultimate 64 hardware, even if the user doesn't say "skill" or name a file.
 ---
 
 # ISO64 Commodore engine
@@ -17,6 +17,7 @@ ISO64 is one turn-based isometric RPG, shipped as one engine per machine. The go
 | Ultimate turbo, Command Interface, SIDs | [references/ultimate.md](references/ultimate.md), then `docs/research/ultimate.md` |
 | C128 / VDC | [references/c128-vdc.md](references/c128-vdc.md), then `docs/research/c128.md` |
 | VIC-20 | [references/vic20.md](references/vic20.md), then `docs/research/vic20.md` |
+| PETSCII: games, glyph codes, semigraphics, an isometric diamond from quarter blocks, UI text, Petmate | [references/petscii.md](references/petscii.md), then `docs/research/petscii.md` |
 | Build, test, VICE, Windows quirks | [references/workflow.md](references/workflow.md) |
 
 The `docs/research/*.md` files carry confidence marks: H = documented or measured, M = community source, L = unconfirmed, 🔧 = needs real hardware. Keep the marks when you quote a claim, so nobody builds on an unconfirmed claim by accident.
